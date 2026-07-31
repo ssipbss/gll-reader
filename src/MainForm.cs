@@ -32,6 +32,7 @@ namespace GenDaLangDu {
     private DateTime _lastChineseCommitAt = DateTime.MinValue;
     private IntPtr _lastChineseCommitHwnd = IntPtr.Zero;
     private bool _composing;
+    private bool _imeEnglishMode;
     private DateTime _lastMouseDownAt = DateTime.MinValue;
     private DateTime _lastKeyAt = DateTime.MinValue;
     private DateTime _lastSpokenAt = DateTime.MinValue;
@@ -68,6 +69,7 @@ namespace GenDaLangDu {
       BuildUi();
       BuildTray();
       LoadSettings();
+      LogTest("SETTINGS_LOADED path=" + SettingsPath() + " rate=" + _settings.Rate + " debug=" + _settings.DebugLog + " click=" + _settings.ClickSpeak);
       if (_forceDebug) _settings.DebugLog = true;
       _speaker.Log = DebugLog;
       _speaker.RefreshVoices(CurrentZhVoice(), CurrentEnVoice());
@@ -488,6 +490,10 @@ namespace GenDaLangDu {
           ScheduleImeCheck();
           return;
         }
+        if (e.Vk == 0x10) {
+          _imeEnglishMode = !_imeEnglishMode;
+          if (_imeEnglishMode) _composing = false;
+        }
         if (e.Vk == 0x0D || e.Vk == 0x1B) _composing = false;
       }
 
@@ -503,7 +509,7 @@ namespace GenDaLangDu {
         return;
       }
 
-      if (chineseMode && e.Vk >= 0x41 && e.Vk <= 0x5A && !ShiftOrCaps()) {
+      if (chineseMode && e.Vk >= 0x41 && e.Vk <= 0x5A && !ShiftOrCaps() && !_imeEnglishMode) {
         _composing = true;
         _lastPinyinKeyAt = DateTime.Now;
       }
@@ -513,7 +519,7 @@ namespace GenDaLangDu {
       if (!string.IsNullOrEmpty(chars)) {
         foreach (char c in chars) {
           if (KeyTranslator.IsLatinLetter(c)) {
-            if ((chineseMode || _composing) && !ShiftOrCaps()) {
+            if ((chineseMode || _composing) && !ShiftOrCaps() && !_imeEnglishMode) {
               _composing = true;
               _lastPinyinKeyAt = DateTime.Now;
             } else if (_chkLetters.Checked) {
@@ -728,8 +734,8 @@ namespace GenDaLangDu {
     }
 
     private void MarkChineseCommit() {
+      _imeEnglishMode = false;
       _lastChineseCommitAt = DateTime.Now;
-      try { _lastChineseCommitHwnd = Native.GetForegroundWindow(); } catch { }
     }
 
     private static bool ShiftOrCaps() {

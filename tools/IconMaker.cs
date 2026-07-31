@@ -53,7 +53,7 @@ class IconMaker {
       }
 
       string glyph = "零";
-      using (Font font = new Font("Microsoft YaHei", 136 * s, FontStyle.Bold, GraphicsUnit.Pixel)) {
+      using (Font font = PickFont(168 * s)) {
         StringFormat sf = new StringFormat();
         sf.Alignment = StringAlignment.Center;
         sf.LineAlignment = StringAlignment.Center;
@@ -66,6 +66,20 @@ class IconMaker {
       }
     }
     return bmp;
+  }
+
+  static Font PickFont(float size) {
+    string[] candidates = { "瘦金书", "方正瘦金书简体", "FZShouJinShuTi", "STXingkai", "华文行楷", "KaiTi", "楷体" };
+    foreach (string name in candidates) {
+      try {
+        using (Font probe = new Font(name, size, FontStyle.Regular, GraphicsUnit.Pixel)) {
+          if (string.Equals(probe.Name, name, StringComparison.OrdinalIgnoreCase) || probe.Name == name) {
+            return new Font(name, size, FontStyle.Regular, GraphicsUnit.Pixel);
+          }
+        }
+      } catch { }
+    }
+    return new Font("Microsoft YaHei", size, FontStyle.Bold, GraphicsUnit.Pixel);
   }
 
   static GraphicsPath RoundRect(RectangleF r, float radius) {

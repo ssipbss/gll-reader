@@ -14,6 +14,7 @@ namespace GenDaLangDu {
     }
 
     private readonly BlockingCollection<WorkItem> _queue = new BlockingCollection<WorkItem>();
+    private int _prevBatchCount = 1;
     private readonly ManualResetEvent _ready = new ManualResetEvent(false);
     private Thread _thread;
     private dynamic _zh;
@@ -71,11 +72,14 @@ namespace GenDaLangDu {
 
     private void ProcessBatch(WorkItem first) {
       List<WorkItem> items = new List<WorkItem>();
-      items.Add(first);
       WorkItem tmp;
-      if (_queue.TryTake(out tmp, 0)) items.Add(tmp);
+      bool got = _queue.TryTake(out tmp, 0);
+      if (!got && _prevBatchCount >= 2) {
+        Thread.Sleep(120);
+        got = _queue.TryTake(out tmp, 0);
+      }
+      if (got) items.Add(tmp);
       while (_queue.TryTake(out tmp, 0)) items.Add(tmp);
-
       System.Text.StringBuilder zh = new System.Text.StringBuilder();
       System.Text.StringBuilder en = new System.Text.StringBuilder();
       bool cancelled = false;
@@ -90,8 +94,7 @@ namespace GenDaLangDu {
             break;
           case ItemKind.SpeakEn:
             if (!cancelled) {
-              if (en.Length > 0) en.Append(", ");
-              en.Append(it.Text);
+              en.Append(it.Text.ToUpperInvariant());
             }
             break;
           case ItemKind.SetVoices:
@@ -119,6 +122,12 @@ namespace GenDaLangDu {
             break;
         }
       }
+
+      int speakCount = 0;
+      foreach (WorkItem it in items) {
+        if (it.Kind == ItemKind.SpeakZh || it.Kind == ItemKind.SpeakEn) speakCount++;
+      }
+      _prevBatchCount = speakCount;
 
       if (zh.Length > 0) {
         if (Log != null) Log("ZH_MERGE [" + zh + "]");
