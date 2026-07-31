@@ -669,6 +669,13 @@ namespace GenDaLangDu {
       return sb.ToString();
     }
 
+    private static bool HasCjk(string s) {
+      if (string.IsNullOrEmpty(s)) return false;
+      foreach (char c in s) {
+        if (KeyTranslator.IsCjk(c)) return true;
+      }
+      return false;
+    }
     private static bool ContainsImeSpeakable(string s) {
       foreach (char c in s) {
         bool fullWidth = c >= 0xFF00 && c <= 0xFFEF &&
@@ -731,6 +738,10 @@ namespace GenDaLangDu {
 
     private bool RecentChineseActive() {
       return (DateTime.Now - _lastChineseCommitAt).TotalMilliseconds < 10000;
+    }
+
+    private void MarkChineseCommitIfCjk(string text) {
+      if (HasCjk(text)) MarkChineseCommit();
     }
 
     private void MarkChineseCommit() {

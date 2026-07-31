@@ -15,6 +15,7 @@ namespace GenDaLangDu {
 
     private readonly BlockingCollection<WorkItem> _queue = new BlockingCollection<WorkItem>();
     private int _prevBatchCount = 1;
+    private DateTime _lastEnqueueAt = DateTime.MinValue;
     private readonly ManualResetEvent _ready = new ManualResetEvent(false);
     private Thread _thread;
     private dynamic _zh;
@@ -81,11 +82,13 @@ namespace GenDaLangDu {
       List<WorkItem> items = new List<WorkItem>();
       items.Add(first);
       WorkItem tmp;
-      Diag("W_TAKE1");
       bool got = _queue.TryTake(out tmp, 0);
-      Diag("W_TAKE1_GOT " + got + " prev=" + _prevBatchCount);
-      if (!got && _prevBatchCount >= 2) {
-        Thread.Sleep(120);
+      bool steady = (DateTime.Now - _lastEnqueueAt).TotalMilliseconds < 700;
+      int waitMs = 0;
+      if (!got && steady) waitMs = 450;
+      else if (!got && _prevBatchCount >= 2) waitMs = 120;
+      if (waitMs > 0) {
+        Thread.Sleep(waitMs);
         got = _queue.TryTake(out tmp, 0);
       }
       if (got) items.Add(tmp);
@@ -301,12 +304,14 @@ namespace GenDaLangDu {
     public void SpeakZh(string text) {
       if (string.IsNullOrEmpty(text)) return;
       if (Log != null) Log("ZH:" + text);
+      _lastEnqueueAt = DateTime.Now;
       _queue.Add(new WorkItem { Kind = ItemKind.SpeakZh, Text = text });
     }
 
     public void SpeakEn(string text) {
       if (string.IsNullOrEmpty(text)) return;
       if (Log != null) Log("EN:" + text);
+      _lastEnqueueAt = DateTime.Now;
       _queue.Add(new WorkItem { Kind = ItemKind.SpeakEn, Text = text });
     }
 

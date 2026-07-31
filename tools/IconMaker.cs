@@ -57,14 +57,22 @@ class IconMaker {
 
       string glyph = "零";
       using (Font font = PickFont(176 * s)) {
-        StringFormat sf = new StringFormat();
-        sf.Alignment = StringAlignment.Center;
-        sf.LineAlignment = StringAlignment.Center;
-        using (SolidBrush shadow = new SolidBrush(Color.FromArgb(60, 160, 166, 176))) {
-          g.DrawString(glyph, font, shadow, new RectangleF(0, 2 * s, size, size), sf);
-        }
-        using (SolidBrush ink = new SolidBrush(Color.FromArgb(31, 41, 55))) {
-          g.DrawString(glyph, font, ink, new RectangleF(0, 0, size, size), sf);
+        using (GraphicsPath gp = new GraphicsPath()) {
+          gp.AddString(glyph, font.FontFamily, (int)FontStyle.Regular, font.Size,
+                       new PointF(0, 0), StringFormat.GenericTypographic);
+          RectangleF b = gp.GetBounds();
+          float ox = (size - b.Width) / 2f - b.X;
+          float oy = (size - b.Height) / 2f - b.Y;
+          using (SolidBrush shadow = new SolidBrush(Color.FromArgb(60, 160, 166, 176))) {
+            g.TranslateTransform(ox, oy + 2 * s);
+            g.FillPath(shadow, gp);
+            g.ResetTransform();
+          }
+          using (SolidBrush ink = new SolidBrush(Color.FromArgb(31, 41, 55))) {
+            g.TranslateTransform(ox, oy);
+            g.FillPath(ink, gp);
+            g.ResetTransform();
+          }
         }
       }
     }
