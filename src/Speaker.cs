@@ -137,11 +137,11 @@ namespace GenDaLangDu {
 
       if (zh.Length > 0) {
         if (Log != null) Log("ZH_MERGE [" + zh + "]");
-        SpeakSync(_zh, zh.ToString(), "ZH", ref _lastRateZh, ref _lastVolumeZh);
+        SpeakSync(_zh, zh.ToString(), "ZH", ref _lastRateZh, ref _lastVolumeZh, _rate);
       }
       if (en.Length > 0) {
         if (Log != null) Log("EN_MERGE [" + en + "]");
-        SpeakSync(_en, en.ToString(), "EN", ref _lastRateEn, ref _lastVolumeEn);
+        SpeakSync(_en, en.ToString(), "EN", ref _lastRateEn, ref _lastVolumeEn, Math.Min(10, _rate + 1));
       }
       if (stop) _disposed = true;
     }
@@ -150,9 +150,9 @@ namespace GenDaLangDu {
     private int _lastVolumeZh = int.MinValue;
     private int _lastRateEn = int.MinValue;
     private int _lastVolumeEn = int.MinValue;
-    private void SpeakSync(dynamic voice, string text, string tag, ref int lastRate, ref int lastVolume) {
+    private void SpeakSync(dynamic voice, string text, string tag, ref int lastRate, ref int lastVolume, int rate) {
       try {
-        if (_rate != lastRate) { voice.Rate = _rate; lastRate = _rate; }
+        if (rate != lastRate) { voice.Rate = rate; lastRate = rate; }
         if (_volume != lastVolume) { voice.Volume = _volume; lastVolume = _volume; }
       } catch { }
       try { voice.Speak(text, 0); }
