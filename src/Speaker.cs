@@ -137,11 +137,11 @@ namespace GenDaLangDu {
 
       if (zh.Length > 0) {
         if (Log != null) Log("ZH_MERGE [" + zh + "]");
-        SpeakSync(_zh, zh.ToString(), "ZH", ref _lastRateZh, ref _lastVolumeZh, _rate);
+        SpeakSync(_zh, zh.ToString(), "ZH", ref _lastRateZh, ref _lastVolumeZh, _rate, false);
       }
       if (en.Length > 0) {
         if (Log != null) Log("EN_MERGE [" + en + "]");
-        SpeakSync(_en, en.ToString(), "EN", ref _lastRateEn, ref _lastVolumeEn, Math.Min(10, _rate + 1));
+        SpeakSync(_en, en.ToString(), "EN", ref _lastRateEn, ref _lastVolumeEn, Math.Min(10, _rate + 2), true);
       }
       if (stop) _disposed = true;
     }
@@ -150,13 +150,25 @@ namespace GenDaLangDu {
     private int _lastVolumeZh = int.MinValue;
     private int _lastRateEn = int.MinValue;
     private int _lastVolumeEn = int.MinValue;
-    private void SpeakSync(dynamic voice, string text, string tag, ref int lastRate, ref int lastVolume, int rate) {
+    private void SpeakSync(dynamic voice, string text, string tag, ref int lastRate, ref int lastVolume, int rate, bool xml) {
       try {
         if (rate != lastRate) { voice.Rate = rate; lastRate = rate; }
         if (_volume != lastVolume) { voice.Volume = _volume; lastVolume = _volume; }
       } catch { }
-      try { voice.Speak(text, 0); }
-      catch (Exception ex) { if (Log != null) Log(tag + "_ERR:" + ex.Message); }
+      try {
+        if (xml) voice.Speak(BuildSayAs(text), 8);
+        else voice.Speak(text, 0);
+      } catch (Exception ex) {
+        if (xml) {
+          try { voice.Speak(text, 0); } catch { }
+        }
+        if (Log != null) Log(tag + "_ERR:" + ex.Message);
+      }
+    }
+
+    private static string BuildSayAs(string text) {
+      string t = text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
+      return "<say-as interpret-as=\"characters\">" + t + "</say-as>";
     }
 
     private static void Diag(string msg) { }

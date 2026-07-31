@@ -8,8 +8,6 @@ using System.IO;
 using System.Runtime.InteropServices;
 
 class IconMaker {
-  static PrivateFontCollection _pfc = new PrivateFontCollection();
-
   static void Main(string[] args) {
     string icoPath = args.Length > 0 ? args[0] : "app.ico";
     string pngPath = args.Length > 1 ? args[1] : "icon-preview.png";
@@ -57,61 +55,61 @@ class IconMaker {
   }
 
   static void DrawPixelGlyph(Graphics g, int size, float s) {
-    const int gw = 44;
-    const int gh = 16;
-    using (Bitmap gb = new Bitmap(176, 64, PixelFormat.Format32bppArgb)) {
+    const int gw = 64;
+    const int gh = 20;
+    using (Bitmap gb = new Bitmap(192, 80, PixelFormat.Format32bppArgb)) {
       using (Graphics gg = Graphics.FromImage(gb)) {
         gg.Clear(Color.White);
         gg.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
-        using (Font f = new Font("Arial Black", 48f, FontStyle.Regular, GraphicsUnit.Pixel)) {
+        using (Font f = new Font("Arial Black", 60f, FontStyle.Regular, GraphicsUnit.Pixel)) {
           StringFormat sf = new StringFormat();
           sf.Alignment = StringAlignment.Center;
           sf.LineAlignment = StringAlignment.Center;
           using (SolidBrush ink = new SolidBrush(Color.Black)) {
-            gg.DrawString("ZERO", f, ink, new RectangleF(0, 0, 176, 64), sf);
+            gg.DrawString("ZERO", f, ink, new RectangleF(0, 0, 192, 80), sf);
           }
         }
       }
 
       bool[,] cells = new bool[gh, gw];
-      float cellPx = 176f / gw;
-      float cellPy = 64f / gh;
+      float cellPx = 192f / gw;
+      float cellPy = 80f / gh;
       for (int gy = 0; gy < gh; gy++) {
         for (int gx = 0; gx < gw; gx++) {
           int dark = 0;
           int total = 0;
           int x0 = (int)(gx * cellPx);
           int y0 = (int)(gy * cellPy);
-          int x1 = Math.Min(176, (int)((gx + 1) * cellPx));
-          int y1 = Math.Min(64, (int)((gy + 1) * cellPy));
+          int x1 = Math.Min(192, (int)((gx + 1) * cellPx));
+          int y1 = Math.Min(80, (int)((gy + 1) * cellPy));
           for (int yy = y0; yy < y1; yy++) {
             for (int xx = x0; xx < x1; xx++) {
               Color c = gb.GetPixel(xx, yy);
               total++;
-              if (c.R < 140) dark++;
+              if (c.R < 130) dark++;
             }
           }
-          cells[gy, gx] = dark * 9 > total * 4;
+          cells[gy, gx] = dark * 2 > total;
         }
       }
 
-      float drawW = 228 * s;
-      float drawH = drawW * gh / gw;
-      float cellW = drawW / gw;
-      float cellH = drawH / gh;
-      float offX = (size - drawW) / 2f;
-      float offY = (size - drawH) / 2f;
-      float gap = Math.Min(cellW, cellH) * 0.18f;
+      // 带框：中间三分之一高度，上下留直边
+      float marginX = 12 * s;
+      float bandTop = 84 * s;
+      float bandH = 88 * s;
+      float cellW = (size - 2 * marginX) / gw;
+      float cellH = bandH / gh;
+      float gap = 0.8f * s;
 
       for (int pass = 0; pass < 2; pass++) {
         for (int gy = 0; gy < gh; gy++) {
           for (int gx = 0; gx < gw; gx++) {
             if (!cells[gy, gx]) continue;
-            float ox = offX + gx * cellW;
-            float oy = offY + gy * cellH;
+            float ox = marginX + gx * cellW;
+            float oy = bandTop + gy * cellH;
             if (pass == 0) {
-              using (SolidBrush b = new SolidBrush(Color.FromArgb(60, 150, 156, 166))) {
-                g.FillRectangle(b, ox + 1.2f * s, oy + 2.4f * s, cellW - gap, cellH - gap);
+              using (SolidBrush b = new SolidBrush(Color.FromArgb(55, 150, 156, 166))) {
+                g.FillRectangle(b, ox + 1.0f * s, oy + 2.0f * s, cellW - gap, cellH - gap);
               }
             } else {
               using (SolidBrush b = new SolidBrush(Color.FromArgb(31, 41, 55))) {
