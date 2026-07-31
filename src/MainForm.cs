@@ -746,7 +746,7 @@ namespace GenDaLangDu {
     }
 
     private void MarkChineseCommitIfCjk(string text) {
-      if (HasCjk(text)) MarkChineseCommit();
+      if (HasCjk(text) && !_imeEnglishMode) MarkChineseCommit();
     }
 
     private void MarkChineseCommit() {

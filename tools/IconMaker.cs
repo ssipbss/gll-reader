@@ -57,12 +57,12 @@ class IconMaker {
   }
 
   static void DrawPixelGlyph(Graphics g, int size, float s) {
-    const int grid = 20;
+    const int grid = 16;
     using (Bitmap gb = new Bitmap(64, 64, PixelFormat.Format32bppArgb)) {
       using (Graphics gg = Graphics.FromImage(gb)) {
         gg.Clear(Color.White);
         gg.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
-        using (Font f = PickFont(52f)) {
+        using (Font f = PickFont(60f, true)) {
           StringFormat sf = new StringFormat();
           sf.Alignment = StringAlignment.Center;
           sf.LineAlignment = StringAlignment.Center;
@@ -86,24 +86,53 @@ class IconMaker {
             for (int xx = x0; xx < x1; xx++) {
               Color c = gb.GetPixel(xx, yy);
               total++;
-              if (c.R < 128) dark++;
+              if (c.R < 140) dark++;
             }
           }
-          cells[gy, gx] = dark * 2 > total;
+          cells[gy, gx] = dark * 5 > total * 2;
         }
       }
 
-      float margin = 38 * s;
-      float area = 180 * s;
+      // 加粗：把已填充格子的八邻域也填充
+      bool[,] thick = new bool[grid, grid];
+      for (int gy = 0; gy < grid; gy++) {
+        for (int gx = 0; gx < grid; gx++) {
+          if (!cells[gy, gx]) continue;
+          for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+              int ny = gy + dy;
+              int nx = gx + dx;
+              if (ny >= 0 && ny < grid && nx >= 0 && nx < grid) thick[ny, nx] = true;
+            }
+          }
+        }
+      }
+
+      int minG = grid, maxG = -1, minH = grid, maxH = -1;
+      for (int gy = 0; gy < grid; gy++) {
+        for (int gx = 0; gx < grid; gx++) {
+          if (thick[gy, gx]) {
+            if (gx < minG) minG = gx;
+            if (gx > maxG) maxG = gx;
+            if (gy < minH) minH = gy;
+            if (gy > maxH) maxH = gy;
+          }
+        }
+      }
+      float area = 224 * s;
       float cell = area / grid;
-      float gap = 1.8f * s;
+      float glyphW = (maxG - minG + 1) * cell;
+      float glyphH = (maxH - minH + 1) * cell;
+      float offX = (size - glyphW) / 2f - minG * cell;
+      float offY = (size - glyphH) / 2f - minH * cell;
+      float gap = 2.0f * s;
 
       for (int pass = 0; pass < 2; pass++) {
         for (int gy = 0; gy < grid; gy++) {
           for (int gx = 0; gx < grid; gx++) {
-            if (!cells[gy, gx]) continue;
-            float ox = margin + gx * cell;
-            float oy = margin + gy * cell;
+            if (!thick[gy, gx]) continue;
+            float ox = offX + gx * cell;
+            float oy = offY + gy * cell;
             if (pass == 0) {
               using (SolidBrush b = new SolidBrush(Color.FromArgb(60, 150, 156, 166))) {
                 g.FillRectangle(b, ox + 1.2f * s, oy + 2.4f * s, cell - gap, cell - gap);
@@ -119,13 +148,13 @@ class IconMaker {
     }
   }
 
-  static Font PickFont(float size) {
+  static Font PickFont(float size, bool bold = false) {
     try {
       if (_pfc.Families.Length == 0 && File.Exists("夕体Pro.ttf")) {
         _pfc.AddFontFile("夕体Pro.ttf");
       }
       if (_pfc.Families.Length > 0) {
-        return new Font(_pfc.Families[0], size, FontStyle.Regular, GraphicsUnit.Pixel);
+        return new Font(_pfc.Families[0], size, bold ? FontStyle.Bold : FontStyle.Regular, GraphicsUnit.Pixel);
       }
     } catch { }
     return new Font("Microsoft YaHei", size, FontStyle.Bold, GraphicsUnit.Pixel);
