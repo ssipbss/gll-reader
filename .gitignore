@@ -1,0 +1,9 @@
+bin/
+test_bin/
+示例软件/
+*.rsp
+_patch_test.txt
+发布/settings.xml
+发布/debug.log
+测试/hook_log.txt
+*.user
