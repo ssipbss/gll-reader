@@ -159,6 +159,9 @@ namespace GenDaLangDu {
           }
         } catch { }
       }
+      if (!ok && !string.IsNullOrEmpty(desc)) {
+        try { ok = SelectOneCoreVoice(voice, desc, null); } catch { }
+      }
       if (!ok) {
         try {
           dynamic tokens = voice.GetVoices();
@@ -167,11 +170,50 @@ namespace GenDaLangDu {
             string d = tok.GetDescription();
             if (d.IndexOf(lang, StringComparison.OrdinalIgnoreCase) >= 0) {
               voice.Voice = tok;
+              ok = true;
               break;
             }
           }
         } catch { }
       }
+      if (!ok) {
+        try { SelectOneCoreVoice(voice, null, lang); } catch { }
+      }
+    }
+
+    private static bool SelectOneCoreVoice(dynamic voice, string desc, string lang) {
+      try {
+        dynamic cat = Activator.CreateInstance(Type.GetTypeFromProgID("SAPI.SpObjectTokenCategory"));
+        cat.SetId("HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Speech_OneCore\\Voices", false);
+        dynamic tokens = cat.EnumerateTokens();
+        for (int i = 0; i < tokens.Count; i++) {
+          dynamic tok = tokens.Item(i);
+          string d = tok.GetDescription();
+          bool match = !string.IsNullOrEmpty(desc)
+            ? (string.Equals(d, desc, StringComparison.OrdinalIgnoreCase) ||
+               d.StartsWith(desc, StringComparison.OrdinalIgnoreCase))
+            : d.IndexOf(lang, StringComparison.OrdinalIgnoreCase) >= 0;
+          if (match) {
+            voice.Voice = tok;
+            return true;
+          }
+        }
+      } catch { }
+      return false;
+    }
+
+    private static List<string> OneCoreVoiceNames() {
+      List<string> names = new List<string>();
+      try {
+        dynamic cat = Activator.CreateInstance(Type.GetTypeFromProgID("SAPI.SpObjectTokenCategory"));
+        cat.SetId("HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Speech_OneCore\\Voices", false);
+        dynamic tokens = cat.EnumerateTokens();
+        for (int i = 0; i < tokens.Count; i++) {
+          dynamic tok = tokens.Item(i);
+          names.Add(tok.GetDescription());
+        }
+      } catch { }
+      return names;
     }
 
     public List<string> GetVoices() {
@@ -184,6 +226,11 @@ namespace GenDaLangDu {
           list.Add(tok.GetDescription());
         }
         Marshal.FinalReleaseComObject(v);
+      } catch { }
+      try {
+        foreach (string name in OneCoreVoiceNames()) {
+          if (!list.Contains(name)) list.Add(name);
+        }
       } catch { }
       return list;
     }

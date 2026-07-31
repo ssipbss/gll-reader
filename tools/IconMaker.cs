@@ -28,41 +28,41 @@ class IconMaker {
     Bitmap bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
     using (Graphics g = Graphics.FromImage(bmp)) {
       g.SmoothingMode = SmoothingMode.AntiAlias;
+      g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
       g.Clear(Color.Transparent);
       float s = size / 256f;
 
-      RectangleF bg = new RectangleF(8 * s, 8 * s, 240 * s, 240 * s);
+      RectangleF bg = new RectangleF(6 * s, 6 * s, 244 * s, 244 * s);
       using (GraphicsPath p = RoundRect(bg, 58 * s)) {
         using (LinearGradientBrush b = new LinearGradientBrush(bg,
-                 Color.FromArgb(9, 54, 96), Color.FromArgb(22, 148, 170), 135f)) {
+                 Color.FromArgb(255, 255, 255), Color.FromArgb(245, 247, 249), 90f)) {
           g.FillPath(b, p);
         }
       }
       using (GraphicsPath p = RoundRect(bg, 58 * s)) {
-        using (Pen pen = new Pen(Color.FromArgb(70, 255, 255, 255), 2 * s)) {
+        using (PathGradientBrush pb = new PathGradientBrush(p)) {
+          pb.CenterColor = Color.FromArgb(255, 255, 255);
+          pb.SurroundColors = new Color[] { Color.FromArgb(234, 237, 241) };
+          g.FillPath(pb, p);
+        }
+      }
+      using (GraphicsPath p = RoundRect(bg, 58 * s)) {
+        using (Pen pen = new Pen(Color.FromArgb(226, 229, 234), 1.5f)) {
           g.DrawPath(pen, p);
         }
       }
 
-      float penW = 16 * s;
-      RectangleF ring1 = new RectangleF(58 * s, 94 * s, 60 * s, 60 * s);
-      using (Pen pen = new Pen(Color.White, penW)) {
-        pen.StartCap = LineCap.Round;
-        pen.EndCap = LineCap.Round;
-        g.DrawEllipse(pen, ring1);
-      }
-      RectangleF ring2 = new RectangleF(138 * s, 94 * s, 60 * s, 60 * s);
-      using (Pen pen = new Pen(Color.White, penW)) {
-        pen.StartCap = LineCap.Round;
-        pen.EndCap = LineCap.Round;
-        g.DrawEllipse(pen, ring2);
-      }
-
-      using (Pen pen = new Pen(Color.White, 6 * s)) {
-        pen.StartCap = LineCap.Round;
-        pen.EndCap = LineCap.Round;
-        g.DrawArc(pen, 196 * s, 42 * s, 30 * s, 30 * s, -60, 120);
-        g.DrawArc(pen, 210 * s, 30 * s, 42 * s, 42 * s, -60, 120);
+      string glyph = "零";
+      using (Font font = new Font("Microsoft YaHei", 136 * s, FontStyle.Bold, GraphicsUnit.Pixel)) {
+        StringFormat sf = new StringFormat();
+        sf.Alignment = StringAlignment.Center;
+        sf.LineAlignment = StringAlignment.Center;
+        using (SolidBrush shadow = new SolidBrush(Color.FromArgb(70, 170, 176, 186))) {
+          g.DrawString(glyph, font, shadow, new RectangleF(0, 4 * s, size, size), sf);
+        }
+        using (SolidBrush ink = new SolidBrush(Color.FromArgb(31, 41, 55))) {
+          g.DrawString(glyph, font, ink, new RectangleF(0, 0, size, size), sf);
+        }
       }
     }
     return bmp;

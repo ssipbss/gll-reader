@@ -5,19 +5,19 @@ using System.Windows.Forms;
 
 namespace GenDaLangDu {
   public static class UiColors {
-    public static readonly Color HeaderTop = Color.FromArgb(11, 56, 94);
-    public static readonly Color HeaderBottom = Color.FromArgb(26, 118, 168);
-    public static readonly Color Accent = Color.FromArgb(46, 139, 255);
-    public static readonly Color AccentHover = Color.FromArgb(70, 156, 255);
-    public static readonly Color AccentDown = Color.FromArgb(30, 112, 222);
-    public static readonly Color PageBg = Color.FromArgb(245, 247, 250);
+    public static readonly Color HeaderTop = Color.White;
+    public static readonly Color HeaderBottom = Color.White;
+    public static readonly Color Accent = Color.FromArgb(17, 24, 39);
+    public static readonly Color AccentHover = Color.FromArgb(55, 65, 81);
+    public static readonly Color AccentDown = Color.FromArgb(3, 7, 18);
+    public static readonly Color PageBg = Color.FromArgb(247, 248, 250);
     public static readonly Color CardBg = Color.White;
-    public static readonly Color CardBorder = Color.FromArgb(227, 233, 240);
-    public static readonly Color TextDark = Color.FromArgb(38, 50, 66);
-    public static readonly Color TextGray = Color.FromArgb(118, 132, 148);
-    public static readonly Color Track = Color.FromArgb(220, 228, 238);
-    public static readonly Color Ok = Color.FromArgb(61, 220, 151);
-    public static readonly Color Paused = Color.FromArgb(168, 180, 194);
+    public static readonly Color CardBorder = Color.FromArgb(229, 231, 235);
+    public static readonly Color TextDark = Color.FromArgb(17, 24, 39);
+    public static readonly Color TextGray = Color.FromArgb(107, 114, 128);
+    public static readonly Color Track = Color.FromArgb(229, 231, 235);
+    public static readonly Color Ok = Color.FromArgb(5, 122, 85);
+    public static readonly Color Paused = Color.FromArgb(107, 114, 128);
   }
 
   public static class UiDraw {
@@ -249,12 +249,12 @@ namespace GenDaLangDu {
       r.Width--;
       r.Height--;
       using (GraphicsPath p = UiDraw.RoundRect(r, r.Height / 2)) {
-        using (SolidBrush b = new SolidBrush(Active ? Color.FromArgb(226, 247, 238) : Color.FromArgb(238, 241, 245))) {
+        using (SolidBrush b = new SolidBrush(Active ? Color.FromArgb(233, 248, 241) : Color.FromArgb(243, 244, 246))) {
           e.Graphics.FillPath(b, p);
         }
       }
       string text = Active ? "● 正在监听" : "○ 已暂停";
-      Color c = Active ? Color.FromArgb(17, 146, 99) : Color.FromArgb(122, 135, 148);
+      Color c = Active ? Color.FromArgb(5, 122, 85) : Color.FromArgb(107, 114, 128);
       TextRenderer.DrawText(e.Graphics, text, Font, ClientRectangle, c,
         TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
     }

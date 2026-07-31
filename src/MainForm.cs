@@ -189,7 +189,7 @@ namespace GenDaLangDu {
       lblTitle.Location = new Point(82, 16);
       lblTitle.AutoSize = true;
       lblTitle.Font = new Font(Font.FontFamily, 18F, FontStyle.Bold);
-      lblTitle.ForeColor = Color.FromArgb(16, 42, 67);
+      lblTitle.ForeColor = UiColors.TextDark;
 
       Label lblSub = new Label();
       lblSub.Text = "打字朗读 · 每个按键清晰可闻";
@@ -503,7 +503,7 @@ namespace GenDaLangDu {
         return;
       }
 
-      if (chineseMode && e.Vk >= 0x41 && e.Vk <= 0x5A) {
+      if (chineseMode && e.Vk >= 0x41 && e.Vk <= 0x5A && !ShiftOrCaps()) {
         _composing = true;
         _lastPinyinKeyAt = DateTime.Now;
       }
@@ -513,7 +513,7 @@ namespace GenDaLangDu {
       if (!string.IsNullOrEmpty(chars)) {
         foreach (char c in chars) {
           if (KeyTranslator.IsLatinLetter(c)) {
-            if (chineseMode || _composing) {
+            if ((chineseMode || _composing) && !ShiftOrCaps()) {
               _composing = true;
               _lastPinyinKeyAt = DateTime.Now;
             } else if (_chkLetters.Checked) {
@@ -732,6 +732,14 @@ namespace GenDaLangDu {
       try { _lastChineseCommitHwnd = Native.GetForegroundWindow(); } catch { }
     }
 
+    private static bool ShiftOrCaps() {
+      try {
+        if ((Native.GetAsyncKeyState(0x10) & 0x8000) != 0) return true;
+        if ((Native.GetAsyncKeyState(0x14) & 1) != 0) return true;
+      } catch { }
+      return false;
+    }
+
     private bool IsOurProcessForeground() {
       try {
         IntPtr h = Native.GetForegroundWindow();
@@ -748,6 +756,13 @@ namespace GenDaLangDu {
       _loading = true;
       try {
         string path = SettingsPath();
+        if (!File.Exists(path) && File.Exists(OldSettingsPath())) {
+          try {
+            string dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            File.Copy(OldSettingsPath(), path, false);
+          } catch { }
+        }
         if (File.Exists(path)) {
           XmlSerializer ser = new XmlSerializer(typeof(AppSettings));
           using (FileStream fs = File.OpenRead(path)) {
@@ -844,6 +859,8 @@ namespace GenDaLangDu {
         _settings.Modifiers = _chkModifiers.Checked;
         _settings.DebugLog = _chkDebug.Checked;
         _settings.ClickSpeak = _chkClickSpeak.Checked;
+        string settingsDir = Path.GetDirectoryName(SettingsPath());
+        if (!string.IsNullOrEmpty(settingsDir)) Directory.CreateDirectory(settingsDir);
         XmlSerializer ser = new XmlSerializer(typeof(AppSettings));
         using (FileStream fs = File.Create(SettingsPath())) {
           ser.Serialize(fs, _settings);
@@ -852,6 +869,11 @@ namespace GenDaLangDu {
     }
 
     private static string SettingsPath() {
+      string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GuiLingGuiLing");
+      return Path.Combine(dir, "settings.xml");
+    }
+
+    private static string OldSettingsPath() {
       return Path.Combine(Application.StartupPath, "settings.xml");
     }
 
