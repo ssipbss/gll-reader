@@ -323,6 +323,15 @@ class UiImeDiag4 {
       Thread.Sleep(700);
       Console.WriteLine("after colon=[" + Head(FocusedValue()) + "]");
 
+      Console.WriteLine("PHASE2 shift-tap english test");
+      PressVk(0x10);
+      Thread.Sleep(400);
+      TypeText("hello");
+      Thread.Sleep(700);
+      Console.WriteLine("after shift-tap hello=[" + Head(FocusedValue()) + "]");
+      PressVk(0x10);
+      Thread.Sleep(400);
+
       // PHASE3: click into another notepad window's text area (click-silence test)
       IntPtr other = IntPtr.Zero;
       foreach (IntPtr w in _windows) {

@@ -83,14 +83,6 @@ namespace GenDaLangDu {
       items.Add(first);
       WorkItem tmp;
       bool got = _queue.TryTake(out tmp, 0);
-      bool steady = (DateTime.Now - _lastEnqueueAt).TotalMilliseconds < 700;
-      int waitMs = 0;
-      if (!got && steady) waitMs = 450;
-      else if (!got && _prevBatchCount >= 2) waitMs = 120;
-      if (waitMs > 0) {
-        Thread.Sleep(waitMs);
-        got = _queue.TryTake(out tmp, 0);
-      }
       if (got) items.Add(tmp);
       while (_queue.TryTake(out tmp, 0)) items.Add(tmp);
       Diag("W_DRAINED " + items.Count);
@@ -145,18 +137,24 @@ namespace GenDaLangDu {
 
       if (zh.Length > 0) {
         if (Log != null) Log("ZH_MERGE [" + zh + "]");
-        SpeakSync(_zh, zh.ToString(), "ZH");
+        SpeakSync(_zh, zh.ToString(), "ZH", ref _lastRateZh, ref _lastVolumeZh);
       }
       if (en.Length > 0) {
         if (Log != null) Log("EN_MERGE [" + en + "]");
-        SpeakSync(_en, en.ToString(), "EN");
+        SpeakSync(_en, en.ToString(), "EN", ref _lastRateEn, ref _lastVolumeEn);
       }
       if (stop) _disposed = true;
     }
-    private void SpeakSync(dynamic voice, string text, string tag) {
-      if (voice == null) return;
-      Diag("W_SPEAK " + tag + " [" + text + "]");
-      try { voice.Rate = _rate; voice.Volume = _volume; } catch { }
+
+    private int _lastRateZh = int.MinValue;
+    private int _lastVolumeZh = int.MinValue;
+    private int _lastRateEn = int.MinValue;
+    private int _lastVolumeEn = int.MinValue;
+    private void SpeakSync(dynamic voice, string text, string tag, ref int lastRate, ref int lastVolume) {
+      try {
+        if (_rate != lastRate) { voice.Rate = _rate; lastRate = _rate; }
+        if (_volume != lastVolume) { voice.Volume = _volume; lastVolume = _volume; }
+      } catch { }
       try { voice.Speak(text, 0); }
       catch (Exception ex) { if (Log != null) Log(tag + "_ERR:" + ex.Message); }
     }

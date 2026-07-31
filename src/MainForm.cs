@@ -57,8 +57,8 @@ namespace GenDaLangDu {
     private CheckBox _chkClickSpeak;
 
     public MainForm(string[] args) {
+      _loading = true;
       ParseArgs(args);
-      LogTest("CTOR_BEGIN");
       try {
         _speaker = new Speaker();
         LogTest("SPEAKER_OK");
@@ -110,6 +110,9 @@ namespace GenDaLangDu {
           SimulateKey(0x08);
           SimulateKey(0x2E);
           SimulateKey(0x25);
+          SimulateKey(0x10);
+          SimulateKey(0x41);
+          SimulateKey(0x42);
           LogTest("SIMULATE_DONE");
         };
         _injectTimer.Start();
@@ -490,10 +493,6 @@ namespace GenDaLangDu {
           ScheduleImeCheck();
           return;
         }
-        if (e.Vk == 0x10) {
-          _imeEnglishMode = !_imeEnglishMode;
-          if (_imeEnglishMode) _composing = false;
-        }
         if (e.Vk == 0x0D || e.Vk == 0x1B) _composing = false;
       }
 
@@ -501,6 +500,11 @@ namespace GenDaLangDu {
       if (keyName != null) {
         if (IsModifierKey(e.Vk)) {
           if (_chkModifiers.Checked && !chineseMode) SpeakZh(keyName);
+      if (e.Vk == 0x10 || e.Vk == 0xA0 || e.Vk == 0xA1) {
+        _imeEnglishMode = !_imeEnglishMode;
+        if (_imeEnglishMode) _composing = false;
+        DebugLog("SHIFT_TOGGLE english=" + _imeEnglishMode + " chinese=" + chineseMode);
+      }
         } else if (_chkFunc.Checked) {
           if (e.Vk >= 0x70 && e.Vk <= 0x87) _speaker.SpeakEn("F" + (e.Vk - 0x70 + 1).ToString());
           else SpeakZh(keyName);
@@ -725,7 +729,8 @@ namespace GenDaLangDu {
     }
 
     private static bool IsModifierKey(uint vk) {
-      return vk == 0x10 || vk == 0x11 || vk == 0x12 || vk == 0x5B || vk == 0x5C;
+      return vk == 0x10 || vk == 0x11 || vk == 0x12 || vk == 0x5B || vk == 0x5C ||
+             vk == 0xA0 || vk == 0xA1 || vk == 0xA2 || vk == 0xA3 || vk == 0xA4 || vk == 0xA5;
     }
 
     private static bool IsCandidateControl(uint vk) {
