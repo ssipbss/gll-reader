@@ -245,8 +245,8 @@ namespace GenDaLangDu {
       _cboZh.DropDownStyle = ComboBoxStyle.DropDownList;
       _cboZh.FlatStyle = FlatStyle.Flat;
       _cboZh.Location = new Point(96, 42);
-      _cboZh.Width = 240;
-      _cboZh.SelectedIndexChanged += delegate { if (!_loading) SaveSettings(); };
+      _cboZh.Width = 330;
+      _cboZh.DropDownWidth = 430;
 
       Label l2 = new Label();
       l2.Text = "字母语音";
@@ -257,8 +257,8 @@ namespace GenDaLangDu {
       _cboEn.DropDownStyle = ComboBoxStyle.DropDownList;
       _cboEn.FlatStyle = FlatStyle.Flat;
       _cboEn.Location = new Point(96, 74);
-      _cboEn.Width = 240;
-      _cboEn.SelectedIndexChanged += delegate { if (!_loading) SaveSettings(); };
+      _cboEn.Width = 330;
+      _cboEn.DropDownWidth = 430;
 
       Label l3 = new Label();
       l3.Text = "语速";

@@ -3,10 +3,13 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
+using System.Drawing.Text;
 using System.IO;
 using System.Runtime.InteropServices;
 
 class IconMaker {
+  static PrivateFontCollection _pfc = new PrivateFontCollection();
+
   static void Main(string[] args) {
     string icoPath = args.Length > 0 ? args[0] : "app.ico";
     string pngPath = args.Length > 1 ? args[1] : "icon-preview.png";
@@ -28,7 +31,7 @@ class IconMaker {
     Bitmap bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
     using (Graphics g = Graphics.FromImage(bmp)) {
       g.SmoothingMode = SmoothingMode.AntiAlias;
-      g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+      g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
       g.Clear(Color.Transparent);
       float s = size / 256f;
 
@@ -53,12 +56,12 @@ class IconMaker {
       }
 
       string glyph = "零";
-      using (Font font = PickFont(168 * s)) {
+      using (Font font = PickFont(176 * s)) {
         StringFormat sf = new StringFormat();
         sf.Alignment = StringAlignment.Center;
         sf.LineAlignment = StringAlignment.Center;
-        using (SolidBrush shadow = new SolidBrush(Color.FromArgb(70, 170, 176, 186))) {
-          g.DrawString(glyph, font, shadow, new RectangleF(0, 4 * s, size, size), sf);
+        using (SolidBrush shadow = new SolidBrush(Color.FromArgb(60, 160, 166, 176))) {
+          g.DrawString(glyph, font, shadow, new RectangleF(0, 2 * s, size, size), sf);
         }
         using (SolidBrush ink = new SolidBrush(Color.FromArgb(31, 41, 55))) {
           g.DrawString(glyph, font, ink, new RectangleF(0, 0, size, size), sf);
@@ -69,7 +72,15 @@ class IconMaker {
   }
 
   static Font PickFont(float size) {
-    string[] candidates = { "瘦金书", "方正瘦金书简体", "FZShouJinShuTi", "STXingkai", "华文行楷", "KaiTi", "楷体" };
+    try {
+      if (_pfc.Families.Length == 0 && File.Exists("夕体Pro.ttf")) {
+        _pfc.AddFontFile("夕体Pro.ttf");
+      }
+      if (_pfc.Families.Length > 0) {
+        return new Font(_pfc.Families[0], size, FontStyle.Regular, GraphicsUnit.Pixel);
+      }
+    } catch { }
+    string[] candidates = { "STXingkai", "华文行楷", "KaiTi", "楷体" };
     foreach (string name in candidates) {
       try {
         using (Font probe = new Font(name, size, FontStyle.Regular, GraphicsUnit.Pixel)) {

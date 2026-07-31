@@ -46,16 +46,22 @@ namespace GenDaLangDu {
     }
 
     private void Worker() {
+      Diag("W_BEGIN");
       try {
         Type t = Type.GetTypeFromProgID("SAPI.SpVoice");
         if (t != null) {
+          Diag("W_CREATE");
           _zh = Activator.CreateInstance(t);
           _en = Activator.CreateInstance(t);
+          Diag("W_SEL_ZH");
           SelectVoice(_zh, _zhVoice, "Chinese");
+          Diag("W_SEL_EN");
           SelectVoice(_en, _enVoice, "English");
+          Diag("W_INIT_OK");
         }
       } catch (Exception ex) {
         if (Log != null) Log("SPEAKER_INIT_ERR:" + ex.Message);
+        Diag("W_INIT_ERR " + ex.Message);
       }
       _ready.Set();
 
@@ -71,21 +77,27 @@ namespace GenDaLangDu {
     }
 
     private void ProcessBatch(WorkItem first) {
+      Diag("W_BATCH kind=" + first.Kind);
       List<WorkItem> items = new List<WorkItem>();
+      items.Add(first);
       WorkItem tmp;
+      Diag("W_TAKE1");
       bool got = _queue.TryTake(out tmp, 0);
+      Diag("W_TAKE1_GOT " + got + " prev=" + _prevBatchCount);
       if (!got && _prevBatchCount >= 2) {
         Thread.Sleep(120);
         got = _queue.TryTake(out tmp, 0);
       }
       if (got) items.Add(tmp);
       while (_queue.TryTake(out tmp, 0)) items.Add(tmp);
+      Diag("W_DRAINED " + items.Count);
       System.Text.StringBuilder zh = new System.Text.StringBuilder();
       System.Text.StringBuilder en = new System.Text.StringBuilder();
       bool cancelled = false;
       bool stop = false;
 
       foreach (WorkItem it in items) {
+        Diag("W_ITEM " + it.Kind);
         switch (it.Kind) {
           case ItemKind.SpeakZh:
             if (!cancelled) {
@@ -99,8 +111,7 @@ namespace GenDaLangDu {
             break;
           case ItemKind.SetVoices:
             try {
-              SelectVoice(_zh, _zhVoice, "Chinese");
-              SelectVoice(_en, _enVoice, "English");
+              ApplyVoices(_zhVoice, _enVoice);
             } catch (Exception ex) {
               if (Log != null) Log("SETVOICES_ERR:" + ex.Message);
             }
@@ -139,13 +150,15 @@ namespace GenDaLangDu {
       }
       if (stop) _disposed = true;
     }
-
     private void SpeakSync(dynamic voice, string text, string tag) {
       if (voice == null) return;
+      Diag("W_SPEAK " + tag + " [" + text + "]");
       try { voice.Rate = _rate; voice.Volume = _volume; } catch { }
       try { voice.Speak(text, 0); }
       catch (Exception ex) { if (Log != null) Log(tag + "_ERR:" + ex.Message); }
     }
+
+    private static void Diag(string msg) { }
 
     private static void Cancel(dynamic voice) {
       try { if (voice != null) voice.Speak("", 2); } catch { }
@@ -154,6 +167,9 @@ namespace GenDaLangDu {
     private static void SelectVoice(dynamic voice, string desc, string lang) {
       bool ok = false;
       if (!string.IsNullOrEmpty(desc)) {
+        try { ok = SelectOneCoreVoice(voice, desc, null); } catch { }
+      }
+      if (!ok && !string.IsNullOrEmpty(desc)) {
         try {
           dynamic tokens = voice.GetVoices();
           for (int i = 0; i < tokens.Count; i++) {
@@ -167,9 +183,6 @@ namespace GenDaLangDu {
             }
           }
         } catch { }
-      }
-      if (!ok && !string.IsNullOrEmpty(desc)) {
-        try { ok = SelectOneCoreVoice(voice, desc, null); } catch { }
       }
       if (!ok) {
         try {
@@ -190,11 +203,39 @@ namespace GenDaLangDu {
       }
     }
 
+    private void ApplyVoices(string zhDesc, string enDesc) {
+      Diag("AV_BEGIN");
+      try { Cancel(_zh); } catch { }
+      try { Cancel(_en); } catch { }
+      dynamic oldZh = _zh;
+      dynamic oldEn = _en;
+      try {
+        Type t = Type.GetTypeFromProgID("SAPI.SpVoice");
+        dynamic newZh = Activator.CreateInstance(t);
+        dynamic newEn = Activator.CreateInstance(t);
+        Diag("AV_SEL_ZH");
+        SelectVoice(newZh, zhDesc, "Chinese");
+        Diag("AV_SEL_EN");
+        SelectVoice(newEn, enDesc, "English");
+        Diag("AV_SWAP");
+        _zh = newZh;
+        _en = newEn;
+      } catch (Exception ex) {
+        Diag("AV_ERR " + ex.Message);
+      }
+      try { Marshal.FinalReleaseComObject(oldZh); } catch { }
+      try { Marshal.FinalReleaseComObject(oldEn); } catch { }
+      Diag("AV_DONE");
+    }
+
     private static bool SelectOneCoreVoice(dynamic voice, string desc, string lang) {
       try {
+        Diag("SV_CAT");
         dynamic cat = Activator.CreateInstance(Type.GetTypeFromProgID("SAPI.SpObjectTokenCategory"));
         cat.SetId("HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Speech_OneCore\\Voices", false);
+        Diag("SV_ENUM");
         dynamic tokens = cat.EnumerateTokens();
+        Diag("SV_TOKENS " + tokens.Count);
         for (int i = 0; i < tokens.Count; i++) {
           dynamic tok = tokens.Item(i);
           string d = tok.GetDescription();
@@ -203,7 +244,9 @@ namespace GenDaLangDu {
                d.StartsWith(desc, StringComparison.OrdinalIgnoreCase))
             : d.IndexOf(lang, StringComparison.OrdinalIgnoreCase) >= 0;
           if (match) {
+            Diag("SV_ASSIGN " + d);
             voice.Voice = tok;
+            Diag("SV_ASSIGNED");
             return true;
           }
         }
