@@ -55,73 +55,51 @@ class IconMaker {
   }
 
   static void DrawPixelGlyph(Graphics g, int size, float s) {
-    const int gw = 64;
-    const int gh = 20;
-    using (Bitmap gb = new Bitmap(192, 80, PixelFormat.Format32bppArgb)) {
-      using (Graphics gg = Graphics.FromImage(gb)) {
-        gg.Clear(Color.White);
-        gg.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
-        using (Font f = new Font("Arial Black", 60f, FontStyle.Regular, GraphicsUnit.Pixel)) {
-          StringFormat sf = new StringFormat();
-          sf.Alignment = StringAlignment.Center;
-          sf.LineAlignment = StringAlignment.Center;
-          using (SolidBrush ink = new SolidBrush(Color.Black)) {
-            gg.DrawString("ZERO", f, ink, new RectangleF(0, 0, 192, 80), sf);
+    const int grid = 20;
+    string[] z = { "1111", "0001", "0010", "0100", "1000", "1000", "1111" };
+    string[] e = { "1111", "1000", "1000", "1111", "1000", "1000", "1111" };
+    string[] r = { "1110", "1001", "1001", "1110", "1010", "1001", "1001" };
+    string[] o = { "1110", "1001", "1001", "1001", "1001", "1001", "1110" };
+    string[][] glyphs = { z, e, r, o };
+    int rowStart = 6;
+    int[] colStarts = { 1, 6, 11, 16 };
+
+    bool[,] cells = new bool[grid, grid];
+    for (int li = 0; li < glyphs.Length; li++) {
+      string[] glyph = glyphs[li];
+      for (int gy = 0; gy < 7; gy++) {
+        for (int gx = 0; gx < 4; gx++) {
+          if (glyph[gy][gx] == '1') {
+            cells[rowStart + gy, colStarts[li] + gx] = true;
           }
         }
       }
+    }
 
-      bool[,] cells = new bool[gh, gw];
-      float cellPx = 192f / gw;
-      float cellPy = 80f / gh;
-      for (int gy = 0; gy < gh; gy++) {
-        for (int gx = 0; gx < gw; gx++) {
-          int dark = 0;
-          int total = 0;
-          int x0 = (int)(gx * cellPx);
-          int y0 = (int)(gy * cellPy);
-          int x1 = Math.Min(192, (int)((gx + 1) * cellPx));
-          int y1 = Math.Min(80, (int)((gy + 1) * cellPy));
-          for (int yy = y0; yy < y1; yy++) {
-            for (int xx = x0; xx < x1; xx++) {
-              Color c = gb.GetPixel(xx, yy);
-              total++;
-              if (c.R < 130) dark++;
+    float tileX = 8 * s;
+    float tileY = 8 * s;
+    float cell = 240f * s / grid;
+    float gap = 1.0f * s;
+
+    for (int pass = 0; pass < 2; pass++) {
+      for (int gy = 0; gy < grid; gy++) {
+        for (int gx = 0; gx < grid; gx++) {
+          if (!cells[gy, gx]) continue;
+          float ox = tileX + gx * cell;
+          float oy = tileY + gy * cell;
+          if (pass == 0) {
+            using (SolidBrush b = new SolidBrush(Color.FromArgb(55, 150, 156, 166))) {
+              g.FillRectangle(b, ox + 0.8f * s, oy + 1.6f * s, cell - gap, cell - gap);
             }
-          }
-          cells[gy, gx] = dark * 2 > total;
-        }
-      }
-
-      // 带框：中间三分之一高度，上下留直边
-      float marginX = 12 * s;
-      float bandTop = 84 * s;
-      float bandH = 88 * s;
-      float cellW = (size - 2 * marginX) / gw;
-      float cellH = bandH / gh;
-      float gap = 0.8f * s;
-
-      for (int pass = 0; pass < 2; pass++) {
-        for (int gy = 0; gy < gh; gy++) {
-          for (int gx = 0; gx < gw; gx++) {
-            if (!cells[gy, gx]) continue;
-            float ox = marginX + gx * cellW;
-            float oy = bandTop + gy * cellH;
-            if (pass == 0) {
-              using (SolidBrush b = new SolidBrush(Color.FromArgb(55, 150, 156, 166))) {
-                g.FillRectangle(b, ox + 1.0f * s, oy + 2.0f * s, cellW - gap, cellH - gap);
-              }
-            } else {
-              using (SolidBrush b = new SolidBrush(Color.FromArgb(31, 41, 55))) {
-                g.FillRectangle(b, ox, oy, cellW - gap, cellH - gap);
-              }
+          } else {
+            using (SolidBrush b = new SolidBrush(Color.FromArgb(31, 41, 55))) {
+              g.FillRectangle(b, ox, oy, cell - gap, cell - gap);
             }
           }
         }
       }
     }
   }
-
   static byte[] ToDib(Bitmap bmp) {
     int w = bmp.Width;
     int h = bmp.Height;
