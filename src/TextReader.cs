@@ -53,10 +53,17 @@ namespace GenDaLangDu {
       }
     }
 
-    private static bool IsTsfCoveredForeground() {
+    internal static bool IsTsfCoveredForeground() {
       try {
         IntPtr h = Native.GetForegroundWindow();
         if (h == IntPtr.Zero) return false;
+        /* Chromium 系窗口类：按键通道（VK_PACKET）逐字朗读，不再走差异通道 */
+        System.Text.StringBuilder cls = new System.Text.StringBuilder(128);
+        if (GetClassName(h, cls, 128) > 0) {
+          string c = cls.ToString();
+          if (c == "Chrome_WidgetWin_1" || c == "Chrome_WidgetWin_0" ||
+              c == "CefBrowserWindow" || c == "Chrome_RenderWidgetHostHWND") return true;
+        }
         uint pid;
         Native.GetWindowThreadProcessId(h, out pid);
         if (pid == 0) return false;
@@ -72,6 +79,9 @@ namespace GenDaLangDu {
         return false;
       }
     }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
 
     private static string ReadFocused(AutomationElement el, out string elementId, out string diag, out int caret) {
       elementId = null;
