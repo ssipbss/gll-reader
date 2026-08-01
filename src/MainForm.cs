@@ -1066,16 +1066,51 @@ namespace GenDaLangDu {
 
     private static string ComputeInserted(string oldT, string newT, int caret) {
       string d;
+      // 1) 平移对齐：覆盖“连续上屏 + 窗口右移”（主路径，不依赖光标）
+      d = ShiftDiff(oldT, newT);
+      if (!string.IsNullOrEmpty(d)) {
+        d = LastLine(d);
+        d = StripHeading(d);
+        return d;
+      }
+      // 2) 前后缀夹逼：覆盖中间插入/替换
+      d = DiffInserted(oldT, newT);
+      if (!string.IsNullOrEmpty(d)) {
+        d = LastLine(d);
+        d = StripHeading(d);
+        return d;
+      }
+      // 3) 光标兜底
       if (TryCaretDiff(oldT, newT, caret, out d)) {
         d = LastLine(d);
         d = StripHeading(d);
         return d;
       }
-      if (caret >= 0) return "";
-      d = DiffInserted(oldT, newT);
-      d = LastLine(d);
-      d = StripHeading(d);
-      return d;
+      return "";
+    }
+
+    /// <summary>
+    /// 平移对齐差异：尝试窗口平移 0~12 字符后新旧窗口完全重合，
+    /// 末尾多出的字符即为刚输入的内容。解决连续多字上屏只截到
+    /// 末尾、以及文档变长导致窗口整体右移的误判。
+    /// </summary>
+    private static string ShiftDiff(string oldT, string newT) {
+      if (string.IsNullOrEmpty(oldT) || string.IsNullOrEmpty(newT)) return "";
+      int maxShift = Math.Min(12, oldT.Length);
+      for (int s = 0; s <= maxShift; s++) {
+        if (newT.Length - s <= 0) break;
+        int cmp = Math.Min(newT.Length - s, oldT.Length - s);
+        if (cmp <= 0) continue;
+        bool ok = true;
+        for (int i = 0; i < cmp; i++) {
+          if (newT[i] != oldT[s + i]) { ok = false; break; }
+        }
+        if (!ok) continue;
+        int extra = newT.Length - (oldT.Length - s);
+        if (extra > 0 && extra <= 12) return newT.Substring(newT.Length - extra);
+        return "";
+      }
+      return "";
     }
 
     private static bool IsModifierKey(uint vk) {
