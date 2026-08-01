@@ -364,6 +364,7 @@ static BOOL IsAllowedProcess(void) {
   if (dot && lstrcmpiW(dot, L".exe") == 0) *dot = 0;
   static const WCHAR *allowed[] = {
     L"wps", L"et", L"wpp", L"chrome", L"msedge", L"bilibili",
+    L"chatgpt", L"codex",
     L"notepad", L"everything", L"winword", L"excel", L"powerpnt",
     L"notepad++"
   };
@@ -684,22 +685,25 @@ static LRESULT CALLBACK HookProc(int nCode, WPARAM wParam, LPARAM lParam) {
           (msg->message == WM_IME_COMPOSITION && (msg->lParam & GCS_RESULTSTR))) {
         CaptureImeResult(msg->hwnd);
       }
-    }
-    GllThreadState *st = GetThreadState();
-    if (st) {
-      if (!st->initialized) {
-        if (IsInputThread()) InitTsf(st);
-      } else if (!st->advisedCtx && msg && (
-          msg->message == 0x0100 || msg->message == 0x0101 ||   /* WM_KEYDOWN/UP */
-          msg->message == WM_IME_STARTCOMPOSITION ||
-          msg->message == WM_IME_COMPOSITION ||
-          msg->message == WM_IME_ENDCOMPOSITION ||
-          msg->message == 0x0102 ||                              /* WM_CHAR */
-          msg->message == 0x0006 || msg->message == 0x0007)) {   /* WM_ACTIVATE/SETFOCUS */
-        st->retryCount++;
-        if (st->retryCount % 4 == 0) {
-          if (!st->initialized) InitTsf(st);
-          else TryAdoptFocus(st);
+      GllThreadState *st = GetThreadState();
+      if (st) {
+        /* 仅在按键/输入法/焦点消息上做初始化与重试，空闲消息零开销 */
+        BOOL interesting = (msg->message == 0x0100 || msg->message == 0x0101 ||
+                            msg->message == WM_IME_STARTCOMPOSITION ||
+                            msg->message == WM_IME_COMPOSITION ||
+                            msg->message == WM_IME_ENDCOMPOSITION ||
+                            msg->message == 0x0102 ||
+                            msg->message == 0x0006 || msg->message == 0x0007);
+        if (interesting) {
+          if (!st->initialized) {
+            if (IsInputThread()) InitTsf(st);
+          } else if (!st->advisedCtx) {
+            st->retryCount++;
+            if (st->retryCount % 4 == 0) {
+              if (!st->initialized) InitTsf(st);
+              else TryAdoptFocus(st);
+            }
+          }
         }
       }
     }
