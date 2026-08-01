@@ -721,6 +721,7 @@ namespace GenDaLangDu {
         if (prevText != null && t != null && t.Length > prevText.Length && t.StartsWith(prevText)) {
           string ins = t.Substring(prevText.Length);
           ins = LastLine(ins);
+          ins = StripHeading(ins);
           DebugLog("UI_ELEMENT_DIFF [" + ins + "]");
           if (ins.Length <= 20 && ins.Trim().Length > 0) {
             if (!_chkClickSpeak.Checked && _lastMouseDownAt > _lastKeyAt) {
@@ -744,6 +745,7 @@ namespace GenDaLangDu {
         if (_lastUiText != null && t != _lastUiText) {
           string ins = DiffInserted(_lastUiText, t);
           ins = LastLine(ins);
+          ins = StripHeading(ins);
           _lastUiText = t;
           if (!string.IsNullOrEmpty(ins) && ins.Length <= 20 && ins.Trim().Length > 0) {
             DebugLog("UI_DIFF [" + ins + "]");
@@ -772,6 +774,7 @@ namespace GenDaLangDu {
       if (t == _lastUiText) return;
       string inserted = DiffInserted(_lastUiText, t);
       inserted = LastLine(inserted);
+      inserted = StripHeading(inserted);
       _lastUiText = t;
       if (string.IsNullOrEmpty(inserted)) return;
       DebugLog("UI_DIFF [" + inserted + "]");
@@ -810,6 +813,32 @@ namespace GenDaLangDu {
       if (string.IsNullOrEmpty(s)) return s;
       int idx = s.LastIndexOf('\n');
       return idx >= 0 ? s.Substring(idx + 1) : s;
+    }
+
+    private static bool IsCnNumeral(char c) {
+      return "零〇一二三四五六七八九十百千两".IndexOf(c) >= 0;
+    }
+
+    private static string StripHeading(string s) {
+      if (string.IsNullOrEmpty(s) || s[0] != '第') return s;
+      int j = 1;
+      bool hasNum = false;
+      while (j < s.Length) {
+        char c = s[j];
+        if (char.IsDigit(c) || IsCnNumeral(c)) {
+          hasNum = true;
+          j++;
+        } else if (c == ' ') {
+          j++;
+        } else {
+          break;
+        }
+      }
+      if (!hasNum || j >= s.Length || s[j] != '章') return s;
+      int k = j + 1;
+      while (k < s.Length && (s[k] == ' ' || s[k] == '\t' || s[k] == '\r' || s[k] == '\n')) k++;
+      string rest = s.Substring(k);
+      return rest.Length > 0 ? rest : s;
     }
 
     private static string FilterForSpeech(string s) {
