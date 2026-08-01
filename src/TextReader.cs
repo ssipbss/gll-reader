@@ -54,16 +54,14 @@ namespace GenDaLangDu {
     }
 
     internal static bool IsTsfCoveredForeground() {
+      return IsChromiumForeground() || IsTsfProcessForeground();
+    }
+
+    /// <summary>仅TSF进程名单（WPS/Office/Bilibili/记事本等）——这些应用中中文由TSF提交朗读。</summary>
+    internal static bool IsTsfProcessForeground() {
       try {
         IntPtr h = Native.GetForegroundWindow();
         if (h == IntPtr.Zero) return false;
-        /* Chromium 系窗口类：按键通道（VK_PACKET）逐字朗读，不再走差异通道 */
-        System.Text.StringBuilder cls = new System.Text.StringBuilder(128);
-        if (GetClassName(h, cls, 128) > 0) {
-          string c = cls.ToString();
-          if (c == "Chrome_WidgetWin_1" || c == "Chrome_WidgetWin_0" ||
-              c == "CefBrowserWindow" || c == "Chrome_RenderWidgetHostHWND") return true;
-        }
         uint pid;
         Native.GetWindowThreadProcessId(h, out pid);
         if (pid == 0) return false;
@@ -78,6 +76,20 @@ namespace GenDaLangDu {
       } catch {
         return false;
       }
+    }
+
+    private static bool IsChromiumForeground() {
+      try {
+        IntPtr h = Native.GetForegroundWindow();
+        if (h == IntPtr.Zero) return false;
+        System.Text.StringBuilder cls = new System.Text.StringBuilder(128);
+        if (GetClassName(h, cls, 128) > 0) {
+          string c = cls.ToString();
+          return c == "Chrome_WidgetWin_1" || c == "Chrome_WidgetWin_0" ||
+                 c == "CefBrowserWindow" || c == "Chrome_RenderWidgetHostHWND";
+        }
+      } catch { }
+      return false;
     }
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
