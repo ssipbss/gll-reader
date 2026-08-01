@@ -517,11 +517,17 @@ namespace GenDaLangDu {
       if (keyName != null) {
         if (IsModifierKey(e.Vk)) {
           if (_chkModifiers.Checked && !chineseMode) SpeakZh(keyName);
-      if (e.Vk == 0x10 || e.Vk == 0xA0 || e.Vk == 0xA1) {
-        _imeEnglishMode = !_imeEnglishMode;
-        if (_imeEnglishMode) _composing = false;
-        DebugLog("SHIFT_TOGGLE english=" + _imeEnglishMode + " chinese=" + chineseMode);
-      }
+          if (e.Vk == 0x10 || e.Vk == 0xA0 || e.Vk == 0xA1) {
+            bool ctrl = CtrlDown();
+            bool alt = AltDown();
+            if (ctrl || alt) {
+              DebugLog("SHIFT_TOGGLE_IGNORED ctrl=" + ctrl + " alt=" + alt);
+            } else {
+              _imeEnglishMode = !_imeEnglishMode;
+              if (_imeEnglishMode) _composing = false;
+              DebugLog("SHIFT_TOGGLE english=" + _imeEnglishMode + " chinese=" + chineseMode);
+            }
+          }
         } else if (_chkFunc.Checked) {
           if (e.Vk >= 0x70 && e.Vk <= 0x87) _speaker.SpeakEn("F" + (e.Vk - 0x70 + 1).ToString());
           else if ((e.Vk == 0x08 || e.Vk == 0x2E) &&
@@ -812,6 +818,15 @@ namespace GenDaLangDu {
         if ((Native.GetAsyncKeyState(0x12) & 0x8000) != 0) return true;
         if ((Native.GetAsyncKeyState(0xA4) & 0x8000) != 0) return true;
         if ((Native.GetAsyncKeyState(0xA5) & 0x8000) != 0) return true;
+      } catch { }
+      return false;
+    }
+
+    private static bool CtrlDown() {
+      try {
+        if ((Native.GetAsyncKeyState(0x11) & 0x8000) != 0) return true;
+        if ((Native.GetAsyncKeyState(0xA2) & 0x8000) != 0) return true;
+        if ((Native.GetAsyncKeyState(0xA3) & 0x8000) != 0) return true;
       } catch { }
       return false;
     }

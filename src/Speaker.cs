@@ -302,7 +302,7 @@ namespace GenDaLangDu {
         if (bps <= 0) return path;
         int total = dataSize / bps;
         if (total <= 0) return path;
-        int threshold = bits == 16 ? 60 : 6;
+        int threshold = bits == 16 ? 12 : 4;
         int first = -1;
         int last = -1;
         for (int i = 0; i < total; i++) {
@@ -315,9 +315,10 @@ namespace GenDaLangDu {
           }
         }
         if (first < 0 || last < first) return path;
-        int margin = Math.Max(1, (int)(sampleRate * 0.015));
-        int start = Math.Max(0, first - margin);
-        int end = Math.Min(total, last + margin);
+        int headMargin = Math.Max(1, (int)(sampleRate * 0.025));
+        int tailMargin = Math.Max(1, (int)(sampleRate * 0.040));
+        int start = Math.Max(0, first - headMargin);
+        int end = Math.Min(total, last + tailMargin);
         int newSize = (end - start) * bps;
         if (newSize <= 0) return path;
         byte[] nb = new byte[dataOffset + newSize];
