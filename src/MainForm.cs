@@ -601,9 +601,11 @@ namespace GenDaLangDu {
           else if (e.Vk == 0x20 && (DateTime.Now - _lastZhCommitAt).TotalMilliseconds < 500) {
             DebugLog("SPACE_AFTER_COMMIT_SKIP");
           }
-          else if (e.Vk == 0x08 || e.Vk == 0x2E) {
-            DebugLog("DELETE_SILENT vk=0x" + e.Vk.ToString("X"));
+          else if ((e.Vk == 0x08 || e.Vk == 0x2E) &&
+                   (DateTime.Now - _lastDeleteSpeakAt).TotalMilliseconds < 800) {
+            DebugLog("DELETE_COALESCE vk=0x" + e.Vk.ToString("X"));
           } else {
+            if (e.Vk == 0x08 || e.Vk == 0x2E) _lastDeleteSpeakAt = DateTime.Now;
             SpeakZh(keyName);
           }
         }
