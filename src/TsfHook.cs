@@ -12,15 +12,7 @@ namespace GenDaLangDu {
 
     private const string WndClass = "GLL_TSF_NOTIFY";
     private const int WM_COPYDATA = 0x004A;
-    private const int GLL_COPYDATA_ID = 0x47544C;
-    private const int GllMsgSize = 4 + 512 * 2;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct COPYDATASTRUCT {
-      public IntPtr dwData;
-      public int cbData;
-      public IntPtr lpData;
-    }
+    private static uint _commitMsg;
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct WNDCLASS {
@@ -57,6 +49,14 @@ namespace GenDaLangDu {
     private static extern bool DestroyWindow(IntPtr hWnd);
     [DllImport("kernel32.dll")]
     private static extern IntPtr GetModuleHandle(string name);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint RegisterWindowMessageW(string name);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern ushort GlobalAddAtomW(string name);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint GlobalGetAtomNameW(ushort atom, StringBuilder buf, int size);
+    [DllImport("kernel32.dll")]
+    private static extern ushort GlobalDeleteAtom(ushort atom);
 
     private static WndProc _wndProc;
     private static IntPtr _hwnd;
@@ -96,12 +96,10 @@ namespace GenDaLangDu {
           _lastError = "CreateWindow err=" + Marshal.GetLastWin32Error();
           return;
         }
-        string dir = AppDomain.CurrentDomain.BaseDirectory;
-        string dll = System.IO.Path.Combine(dir, "gll_tsf_hook64.dll");
-        if (!System.IO.File.Exists(dll)) {
-          dll = System.IO.Path.Combine(Environment.CurrentDirectory, "gll_tsf_hook64.dll");
-        }
-        if (!System.IO.File.Exists(dll)) {
+        _commitMsg = RegisterWindowMessageW("GLL_TSF_COMMIT");
+        string dll = FindDll("gll_tsf_hook64_v2.dll");
+        if (dll == null) dll = FindDll("gll_tsf_hook64.dll");
+        if (dll == null) {
           _lastError = "gll_tsf_hook64.dll 不存在";
           return;
         }
@@ -127,6 +125,35 @@ namespace GenDaLangDu {
       }
     }
 
+    private static string FindDll(string name) {
+      try {
+        string dir = AppDomain.CurrentDomain.BaseDirectory;
+        string exeDll = System.IO.Path.Combine(dir, name);
+        if (!System.IO.File.Exists(exeDll)) {
+          exeDll = System.IO.Path.Combine(Environment.CurrentDirectory, name);
+        }
+        string localDir = System.IO.Path.Combine(
+          Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GuiLingGuiLing");
+        string localDll = System.IO.Path.Combine(localDir, name);
+        try {
+          System.IO.Directory.CreateDirectory(localDir);
+          if (System.IO.File.Exists(exeDll)) {
+            bool copy = !System.IO.File.Exists(localDll);
+            if (!copy) {
+              try {
+                copy = System.IO.File.GetLastWriteTimeUtc(exeDll) >
+                       System.IO.File.GetLastWriteTimeUtc(localDll);
+              } catch { }
+            }
+            if (copy) System.IO.File.Copy(exeDll, localDll, true);
+          }
+        } catch { }
+        if (System.IO.File.Exists(localDll)) return localDll;
+        if (System.IO.File.Exists(exeDll)) return exeDll;
+      } catch { }
+      return null;
+    }
+
     public static void Shutdown() {
       try {
         if (_uninstall != IntPtr.Zero) {
@@ -147,22 +174,22 @@ namespace GenDaLangDu {
     }
 
     private static IntPtr WndProcImpl(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam) {
-      if (msg == WM_COPYDATA) {
+      if (_commitMsg != 0 && msg == _commitMsg) {
         try {
-          COPYDATASTRUCT cds = (COPYDATASTRUCT)Marshal.PtrToStructure(lParam, typeof(COPYDATASTRUCT));
-          if (cds.dwData.ToInt32() == GLL_COPYDATA_ID && cds.cbData >= GllMsgSize) {
-            byte[] raw = new byte[GllMsgSize];
-            Marshal.Copy(cds.lpData, raw, 0, GllMsgSize);
-            uint pid = BitConverter.ToUInt32(raw, 0);
-            string text = Encoding.Unicode.GetString(raw, 4, 512 * 2);
-            int n = text.IndexOf('\0');
-            if (n >= 0) text = text.Substring(0, n);
-            if (text.Length > 0 && CommitReceived != null) {
-              CommitReceived(text);
+          ushort atom = (ushort)(lParam.ToInt64() & 0xFFFF);
+          if (atom != 0) {
+            StringBuilder sb = new StringBuilder(512);
+            uint n = GlobalGetAtomNameW(atom, sb, 512);
+            GlobalDeleteAtom(atom);
+            if (n > 0) {
+              string s = sb.ToString();
+              int bar = s.IndexOf('|');
+              string text = bar >= 0 ? s.Substring(bar + 1) : s;
+              if (text.Length > 0 && CommitReceived != null) CommitReceived(text);
             }
           }
         } catch { }
-        return new IntPtr(1);
+        return IntPtr.Zero;
       }
       return DefWindowProcW(hWnd, msg, wParam, lParam);
     }

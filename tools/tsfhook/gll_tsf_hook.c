@@ -213,6 +213,7 @@ static HWND g_hwndCache;
 static int g_debug = 1;
 static WCHAR g_lastSent[GLL_MAX_TEXT];
 static DWORD g_lastSentTick;
+static UINT g_commitMsg;
 
 typedef struct GllSink GllSink;
 typedef struct GllSinkVtbl {
@@ -362,17 +363,18 @@ static void SendCommit(const WCHAR *text, int len) {
     g_hwndCache = hwnd;
   }
   if (!hwnd) return;
-  GllMsg msg;
-  msg.pid = GetCurrentProcessId();
-  wcsncpy(msg.text, text, len);
-  msg.text[len] = 0;
-  COPYDATASTRUCT cds;
-  cds.dwData = GLL_COPYDATA_ID;
-  cds.cbData = sizeof(GllMsg);
-  cds.lpData = &msg;
-  DWORD_PTR result = 0;
-  SendMessageTimeoutW(hwnd, WM_COPYDATA, 0, (LPARAM)&cds,
-                      SMTO_ABORTIFHUNG, 500, &result);
+  /* 零阻塞通知：全局原子 + PostMessage，绝不等待接收方 */
+  if (!g_commitMsg) g_commitMsg = RegisterWindowMessageW(L"GLL_TSF_COMMIT");
+  if (!g_commitMsg) return;
+  int cap = len;
+  if (cap > 220) cap = 220;
+  WCHAR atomText[256];
+  wsprintfW(atomText, L"%lu|", GetCurrentProcessId());
+  wcsncat(atomText, text, cap);
+  atomText[255] = 0;
+  ATOM atom = GlobalAddAtomW(atomText);
+  if (!atom) return;
+  PostMessageW(hwnd, g_commitMsg, (WPARAM)GetCurrentProcessId(), (LPARAM)atom);
 }
 
 /* 进程内读取 IMM 输入法的上屏结果（读霸同款思路，适用于不走 TSF 文档的应用） */
@@ -540,8 +542,6 @@ static HRESULT STDMETHODCALLTYPE Sink_OnSetFocus(GllSink *self, ITfDocumentMgr *
     if (SUCCEEDED(hr) && ctx) {
       AdviseContext(st, ctx);
     }
-  } else {
-    UnadviseContext(st);
   }
   return S_OK;
 }
@@ -556,6 +556,10 @@ static HRESULT STDMETHODCALLTYPE Sink_OnPushContext(GllSink *self, ITfContext *p
 
 static HRESULT STDMETHODCALLTYPE Sink_OnPopContext(GllSink *self, ITfContext *pic) {
   Dbg(L"OnPopContext ctx=%p", (void*)pic);
+  GllThreadState *st = GetThreadState();
+  if (st && pic && st->advisedCtx == pic) {
+    UnadviseContext(st);
+  }
   return S_OK;
 }
 

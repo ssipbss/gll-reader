@@ -65,10 +65,16 @@ Copy-Item (Join-Path $root '使用说明.txt') (Join-Path $finalOut '使用说�
 foreach ($name in @('gll_tsf_hook64.dll', 'gll_tsf_hook32.dll')) {
   $srcDll = Join-Path $root ('tools\tsfhook\bin\' + $name)
   $dstDll = Join-Path $finalOut $name
+  $dstDll2 = Join-Path $finalOut ($name -replace '\.dll$', '_v2.dll')
   try {
     Copy-Item $srcDll $dstDll -Force
   } catch {
     Write-Warning ("无法更新 " + $name + "（可能被其他程序占用，沿用现有文件）")
+  }
+  try {
+    Copy-Item $srcDll $dstDll2 -Force
+  } catch {
+    Write-Warning ("无法更新 " + ($name -replace '\.dll$', '_v2.dll'))
   }
 }
 Write-Output ("BUILD OK: " + (Join-Path $finalOut '归零归零.exe'))

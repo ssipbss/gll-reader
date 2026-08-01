@@ -75,6 +75,14 @@ public static class TsfHost {
   static extern IntPtr GetModuleHandle(string name);
 
   static string _logPath = @"C:\tmp\gll_tsf_host.log";
+  static uint _commitMsg;
+
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+  static extern uint RegisterWindowMessageW(string name);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+  static extern uint GlobalGetAtomNameW(ushort atom, StringBuilder buf, int size);
+  [DllImport("kernel32.dll")]
+  static extern ushort GlobalDeleteAtom(ushort atom);
 
   static void Log(string s) {
     try {
@@ -85,6 +93,23 @@ public static class TsfHost {
   }
 
   static IntPtr WndProcImpl(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam) {
+    if (_commitMsg != 0 && msg == _commitMsg) {
+      try {
+        ushort atom = (ushort)(lParam.ToInt64() & 0xFFFF);
+        var sb = new StringBuilder(512);
+        uint n = GlobalGetAtomNameW(atom, sb, 512);
+        GlobalDeleteAtom(atom);
+        if (n > 0) {
+          string s = sb.ToString();
+          int bar = s.IndexOf('|');
+          string text = bar >= 0 ? s.Substring(bar + 1) : s;
+          Log("COMMIT atom=[" + text + "]");
+        }
+      } catch (Exception ex) {
+        Log("ATOM_ERR " + ex.Message);
+      }
+      return IntPtr.Zero;
+    }
     if (msg == WM_COPYDATA) {
       try {
         COPYDATASTRUCT cds = (COPYDATASTRUCT)Marshal.PtrToStructure(lParam, typeof(COPYDATASTRUCT));
@@ -113,6 +138,7 @@ public static class TsfHost {
     if (args.Length > 0) _logPath = args[0];
     try { System.IO.File.Delete(_logPath); } catch { }
     _proc = WndProcImpl;
+    _commitMsg = RegisterWindowMessageW("GLL_TSF_COMMIT");
     WNDCLASS wc = new WNDCLASS();
     wc.lpfnWndProc = _proc;
     wc.hInstance = GetModuleHandle(null);
