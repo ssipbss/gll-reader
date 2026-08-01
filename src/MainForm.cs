@@ -720,6 +720,7 @@ namespace GenDaLangDu {
         DebugLog("UI_ELEMENT [" + (elementId ?? "") + "]");
         if (prevText != null && t != null && t.Length > prevText.Length && t.StartsWith(prevText)) {
           string ins = t.Substring(prevText.Length);
+          ins = LastLine(ins);
           DebugLog("UI_ELEMENT_DIFF [" + ins + "]");
           if (ins.Length <= 20 && ins.Trim().Length > 0) {
             if (!_chkClickSpeak.Checked && _lastMouseDownAt > _lastKeyAt) {
@@ -742,6 +743,7 @@ namespace GenDaLangDu {
       if (_composing) {
         if (_lastUiText != null && t != _lastUiText) {
           string ins = DiffInserted(_lastUiText, t);
+          ins = LastLine(ins);
           _lastUiText = t;
           if (!string.IsNullOrEmpty(ins) && ins.Length <= 20 && ins.Trim().Length > 0) {
             DebugLog("UI_DIFF [" + ins + "]");
@@ -769,6 +771,7 @@ namespace GenDaLangDu {
       }
       if (t == _lastUiText) return;
       string inserted = DiffInserted(_lastUiText, t);
+      inserted = LastLine(inserted);
       _lastUiText = t;
       if (string.IsNullOrEmpty(inserted)) return;
       DebugLog("UI_DIFF [" + inserted + "]");
@@ -803,6 +806,12 @@ namespace GenDaLangDu {
       return false;
     }
 
+    private static string LastLine(string s) {
+      if (string.IsNullOrEmpty(s)) return s;
+      int idx = s.LastIndexOf('\n');
+      return idx >= 0 ? s.Substring(idx + 1) : s;
+    }
+
     private static string FilterForSpeech(string s) {
       System.Text.StringBuilder sb = new System.Text.StringBuilder();
       foreach (char c in s) {
@@ -812,6 +821,7 @@ namespace GenDaLangDu {
           !(c >= 0xFF41 && c <= 0xFF5A);
         if (c == '\'' || c == '"') continue;
         if (KeyTranslator.IsCjk(c) || (c >= 0x3000 && c <= 0x9FFF) ||
+            (c >= '0' && c <= '9') || (c >= 0xFF10 && c <= 0xFF19) ||
             fullWidth || KeyTranslator.PunctName(c) != null) {
           sb.Append(c);
         }
