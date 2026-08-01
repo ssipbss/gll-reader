@@ -44,6 +44,7 @@ namespace GenDaLangDu {
     private DateTime _lastSpokenAt = DateTime.MinValue;
     private DateTime _lastDeleteSpeakAt = DateTime.MinValue;
     private DateTime _lastZhCommitAt = DateTime.MinValue;
+    private DateTime _lastTsfCommitAt = DateTime.MinValue;
     private bool _selfElevated;
     private DateTime _lastElevationAskAt = DateTime.MinValue;
     private const int MaxUiDiffLen = 10;
@@ -707,6 +708,7 @@ namespace GenDaLangDu {
 
     private bool TrySpeakInserted(string ins) {
       if (string.IsNullOrEmpty(ins)) return false;
+      if ((DateTime.Now - _lastTsfCommitAt).TotalMilliseconds < 600) return false;
       string clean = StripCompositionLetters(ins);
       if (clean.Length == 0) return false;
       string spk = PunctSpokenForm(FilterForSpeech(clean));
@@ -720,6 +722,24 @@ namespace GenDaLangDu {
       MarkChineseCommit();
       DebugLog("UI_INSERT [" + ins + "]");
       return true;
+    }
+
+    private void OnTsfCommit(string text) {
+      try {
+        if (!_listening) return;
+        if (string.IsNullOrEmpty(text)) return;
+        if (IsOurProcessForeground()) return;
+        if (!HasChineseText(text)) return;
+        string spk = PunctSpokenForm(FilterForSpeech(text));
+        if (string.IsNullOrEmpty(spk)) return;
+        if (RecentlySpoken(spk)) return;
+        _composing = false;
+        SpeakZh(spk);
+        RememberSpoken(spk);
+        MarkChineseCommit();
+        _lastTsfCommitAt = DateTime.Now;
+        DebugLog("TSF_COMMIT [" + text + "]");
+      } catch { }
     }
 
     private static string StripCompositionLetters(string s) {
@@ -1278,6 +1298,8 @@ namespace GenDaLangDu {
         return;
       }
       SaveSettings();
+      TsfHook.CommitReceived -= OnTsfCommit;
+      TsfHook.Shutdown();
       StopListening();
       if (_imeTimer != null) _imeTimer.Stop();
       if (_uiTimer != null) _uiTimer.Stop();
@@ -1296,6 +1318,13 @@ namespace GenDaLangDu {
       base.OnLoad(e);
       _hook.KeyEvent += OnKeyBridge;
       _mouseHook.LeftButtonDown += delegate { _lastMouseDownAt = DateTime.Now; };
+      TsfHook.CommitReceived += OnTsfCommit;
+      TsfHook.Init();
+      if (!TsfHook.IsActive && TsfHook.LastError.Length > 0) {
+        DebugLog("TSF_HOOK_ERR " + TsfHook.LastError);
+      } else if (TsfHook.IsActive) {
+        DebugLog("TSF_HOOK_READY");
+      }
     }
 
     private void OnKeyBridge(object sender, KeyHookEventArgs e) {
