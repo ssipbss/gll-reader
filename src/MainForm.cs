@@ -712,6 +712,11 @@ namespace GenDaLangDu {
           string ins = t.Substring(prevText.Length);
           DebugLog("UI_ELEMENT_DIFF [" + ins + "]");
           if (ins.Length <= 20 && ins.Trim().Length > 0) {
+            if (!_chkClickSpeak.Checked && _lastMouseDownAt > _lastKeyAt) {
+              _lastMouseDownAt = DateTime.MinValue;
+              DebugLog("UI_CLICK_IGNORED [" + ins + "]");
+              return;
+            }
             string spk = PunctSpokenForm(FilterForSpeech(ins));
             if (!string.IsNullOrEmpty(spk) && !RecentlySpoken(spk)) {
               _composing = false;
