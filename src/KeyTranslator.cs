@@ -7,6 +7,13 @@ namespace GenDaLangDu {
     private const string CN_DIGITS = "零一二三四五六七八九";
 
     public static string GetChars(uint vk, uint scan) {
+      if (vk == 0xE7) {
+        // VK_PACKET：Chromium 系程序（Edge/Chrome/Codex）经输入法投递按键时，
+        // 字符直接携带在 scanCode 字段中
+        char c = (char)(scan & 0xFFFF);
+        if (c != 0 && !char.IsControl(c)) return c.ToString();
+        return "";
+      }
       byte[] state = new byte[256];
       try { Native.GetKeyboardState(state); } catch { }
       SetDown(state, 0x10, 0x8000);

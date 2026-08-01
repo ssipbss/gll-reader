@@ -631,15 +631,17 @@ namespace GenDaLangDu {
             if (!_composing && _chkFunc.Checked) SpeakZh("空格");
             continue;
           }
-          if (char.IsDigit(c)) {
+          if (char.IsDigit(c) || (c >= '０' && c <= '９')) {
             if (!_composing && _chkDigits.Checked) SpeakZh(KeyTranslator.DigitToChinese(c));
             continue;
           }
           if (KeyTranslator.IsCjk(c)) {
             _composing = false;
-            SpeakZh(c.ToString());
-            RememberSpoken(c.ToString());
             MarkChineseCommit();
+            if (e.Vk != 0xE7) {
+              SpeakZh(c.ToString());
+              RememberSpoken(c.ToString());
+            }
             continue;
           }
           string pn = KeyTranslator.PunctName(c);
