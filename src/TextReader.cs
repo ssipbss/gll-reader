@@ -34,8 +34,12 @@ namespace GenDaLangDu {
       diag = null;
       caret = -1;
       try {
-        string wpsText = WpsComReader.GetFocusedText(out elementId, out diag, out caret);
-        if (wpsText != null) return wpsText;
+        // TSF 钩子激活时，WPS 提交由钩子直接上报；绝不在 UI 线程轮询 WPS COM，
+        // 否则 WPS 忙（如新建文档）时 COM 调用会卡死整个程序
+        if (!TsfHook.IsActive) {
+          string wpsText = WpsComReader.GetFocusedText(out elementId, out diag, out caret);
+          if (wpsText != null) return wpsText;
+        }
         AutomationElement el = AutomationElement.FocusedElement;
         if (el == null) return null;
         try {

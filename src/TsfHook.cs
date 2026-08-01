@@ -65,6 +65,7 @@ namespace GenDaLangDu {
     private static IntPtr _uninstall;
     private static bool _started;
     private static string _lastError = "";
+    private static System.Diagnostics.Process _helper32;
 
     public static string LastError {
       get { return _lastError; }
@@ -119,6 +120,20 @@ namespace GenDaLangDu {
           _lastError = "GllInstallHook 失败";
           return;
         }
+        /* 启动 32 位钩子宿主，覆盖 32 位程序（32 位 WPS、部分桌面客户端） */
+        string host32 = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "gll_hook32_host.exe");
+        if (!System.IO.File.Exists(host32)) {
+          host32 = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "gll_hook32_host.exe");
+        }
+        if (System.IO.File.Exists(host32)) {
+          try {
+            _helper32 = new System.Diagnostics.Process();
+            _helper32.StartInfo.FileName = host32;
+            _helper32.StartInfo.WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden;
+            _helper32.StartInfo.CreateNoWindow = true;
+            _helper32.Start();
+          } catch { }
+        }
         _lastError = "";
       } catch (Exception ex) {
         _lastError = ex.Message;
@@ -155,6 +170,10 @@ namespace GenDaLangDu {
     }
 
     public static void Shutdown() {
+      try {
+        if (_helper32 != null && !_helper32.HasExited) _helper32.Kill();
+      } catch { }
+      _helper32 = null;
       try {
         if (_uninstall != IntPtr.Zero) {
           Marshal.GetDelegateForFunctionPointer<InstallFn>(_uninstall)();
