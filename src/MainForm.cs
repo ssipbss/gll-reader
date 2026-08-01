@@ -651,9 +651,12 @@ namespace GenDaLangDu {
           if (KeyTranslator.IsCjk(c)) {
             _composing = false;
             MarkChineseCommit();
-            SpeakZh(c.ToString());
-            RememberSpoken(c.ToString());
             RememberRecentChar(c);
+            string cs = c.ToString();
+            if (!RecentlySpoken(cs)) {
+              SpeakZh(cs);
+              RememberSpoken(cs);
+            }
             continue;
           }
           string pn = KeyTranslator.PunctName(c);
