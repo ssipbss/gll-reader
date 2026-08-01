@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -9,6 +9,7 @@ namespace GenDaLangDu {
     public const uint WM_KEYUP = 0x101;
     public const uint WM_SYSKEYDOWN = 0x104;
     public const uint WM_SYSKEYUP = 0x105;
+    public const uint WM_QUIT = 0x0012;
     public const uint LLKHF_UP = 0x80;
 
     [StructLayout(LayoutKind.Sequential)]
@@ -18,6 +19,22 @@ namespace GenDaLangDu {
       public uint flags;
       public uint time;
       public IntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT {
+      public int X;
+      public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MSG {
+      public IntPtr hwnd;
+      public uint message;
+      public IntPtr wParam;
+      public IntPtr lParam;
+      public uint time;
+      public POINT pt;
     }
 
     public delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
@@ -33,6 +50,21 @@ namespace GenDaLangDu {
 
     [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
     public static extern IntPtr GetModuleHandle(string lpModuleName);
+
+    [DllImport("user32.dll")]
+    public static extern int GetMessage(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
+
+    [DllImport("user32.dll")]
+    public static extern bool TranslateMessage(ref MSG lpMsg);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr DispatchMessage(ref MSG lpMsg);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool PostThreadMessage(uint idThread, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
 
     [DllImport("user32.dll")]
     public static extern IntPtr GetForegroundWindow();

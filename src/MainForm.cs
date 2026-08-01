@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -933,12 +933,16 @@ namespace GenDaLangDu {
 
     protected override void OnLoad(EventArgs e) {
       base.OnLoad(e);
-      _hook.KeyEvent += OnKey;
+      _hook.KeyEvent += OnKeyBridge;
       _mouseHook.LeftButtonDown += delegate { _lastMouseDownAt = DateTime.Now; };
     }
 
+    private void OnKeyBridge(object sender, KeyHookEventArgs e) {
+      try { BeginInvoke((MethodInvoker)delegate { OnKey(sender, e); }); } catch { }
+    }
+
     protected override void OnFormClosed(FormClosedEventArgs e) {
-      _hook.KeyEvent -= OnKey;
+      _hook.KeyEvent -= OnKeyBridge;
       _hook.Dispose();
       base.OnFormClosed(e);
     }
