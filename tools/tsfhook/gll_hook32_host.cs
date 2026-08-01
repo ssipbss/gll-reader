@@ -18,7 +18,13 @@ public static class GllHook32Host {
   public static void Main() {
     try {
       Log("start");
-      string dll = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "gll_tsf_hook32.dll");
+      string dll = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "gll_tsf_hook32_v3.dll");
+      if (!System.IO.File.Exists(dll)) {
+        dll = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "gll_tsf_hook32_v2.dll");
+      }
+      if (!System.IO.File.Exists(dll)) {
+        dll = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "gll_tsf_hook32.dll");
+      }
       Log("dll=" + dll + " exists=" + System.IO.File.Exists(dll));
       IntPtr h = LoadLibrary(dll);
       if (h == IntPtr.Zero) { Log("LoadLibrary err=" + Marshal.GetLastWin32Error()); return; }

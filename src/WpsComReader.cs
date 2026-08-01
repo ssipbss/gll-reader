@@ -15,10 +15,90 @@ namespace GenDaLangDu {
     private static long _badUntilTick;
     private static string _docKey;
     private static int _winBase;
+    private static readonly object _snapLock = new object();
+    private static string _snapText;
+    private static string _snapElement;
+    private static string _snapDiag;
+    private static int _snapCaret;
+    private static DateTime _snapAt = DateTime.MinValue;
+    private static DateTime _lastReadAt = DateTime.MinValue;
+    private static bool _readRequested;
+    private static System.Threading.Thread _worker;
+    private static DateTime _workerStartedAt = DateTime.MinValue;
     private const int TailChars = 5000;
     private const int HeadChars = 300;
 
+    /// <summary>
+    /// 取最近一次后台读取的 WPS 文档快照（不阻塞 UI 线程）。
+    /// </summary>
     public static string GetFocusedText(out string elementId, out string diag, out int caret) {
+      elementId = null;
+      diag = null;
+      caret = -1;
+      RequestRead();
+      lock (_snapLock) {
+        if (_snapText == null) return null;
+        if ((DateTime.Now - _snapAt).TotalMilliseconds > 1500) return null;
+        elementId = _snapElement;
+        diag = _snapDiag;
+        caret = _snapCaret;
+        return _snapText;
+      }
+    }
+
+    private static void RequestRead() {
+      lock (_snapLock) {
+        _readRequested = true;
+      }
+      lock (_snapLock) {
+        if (_worker == null) {
+          StartWorker();
+        } else if (!_worker.IsAlive) {
+          StartWorker();
+        } else if ((DateTime.Now - _workerStartedAt).TotalSeconds > 5 &&
+                   (DateTime.Now - _snapAt).TotalSeconds > 5) {
+          /* 工作线程可能卡在 WPS COM 调用上：换一个新线程，旧线程放弃 */
+          StartWorker();
+        }
+      }
+    }
+
+    private static void StartWorker() {
+      _worker = new System.Threading.Thread(WorkerLoop);
+      _worker.IsBackground = true;
+      _workerStartedAt = DateTime.Now;
+      try { _worker.SetApartmentState(System.Threading.ApartmentState.STA); } catch { }
+      _worker.Start();
+    }
+
+    private static void WorkerLoop() {
+      while (true) {
+        bool go = false;
+        lock (_snapLock) {
+          if (_readRequested) {
+            _readRequested = false;
+            go = true;
+          }
+        }
+        if (go && (DateTime.Now - _lastReadAt).TotalMilliseconds >= 400) {
+          _lastReadAt = DateTime.Now;
+          string el;
+          string diag;
+          int caret;
+          string text = ReadNow(out el, out diag, out caret);
+          lock (_snapLock) {
+            _snapText = text;
+            _snapElement = el;
+            _snapDiag = diag;
+            _snapCaret = caret;
+            _snapAt = DateTime.Now;
+          }
+        }
+        System.Threading.Thread.Sleep(150);
+      }
+    }
+
+    private static string ReadNow(out string elementId, out string diag, out int caret) {
       elementId = null;
       diag = null;
       caret = -1;

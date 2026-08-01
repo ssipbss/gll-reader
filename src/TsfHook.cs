@@ -8,7 +8,7 @@ namespace GenDaLangDu {
   /// 输入法上屏文本（精确提交事件，不依赖文档差异）。
   /// </summary>
   internal static class TsfHook {
-    public static event Action<string> CommitReceived;
+    public static event Action<uint, string> CommitReceived;
 
     private const string WndClass = "GLL_TSF_NOTIFY";
     private const int WM_COPYDATA = 0x004A;
@@ -98,7 +98,8 @@ namespace GenDaLangDu {
           return;
         }
         _commitMsg = RegisterWindowMessageW("GLL_TSF_COMMIT");
-        string dll = FindDll("gll_tsf_hook64_v2.dll");
+        string dll = FindDll("gll_tsf_hook64_v3.dll");
+        if (dll == null) dll = FindDll("gll_tsf_hook64_v2.dll");
         if (dll == null) dll = FindDll("gll_tsf_hook64.dll");
         if (dll == null) {
           _lastError = "gll_tsf_hook64.dll 不存在";
@@ -147,24 +148,14 @@ namespace GenDaLangDu {
         if (!System.IO.File.Exists(exeDll)) {
           exeDll = System.IO.Path.Combine(Environment.CurrentDirectory, name);
         }
+        if (System.IO.File.Exists(exeDll)) return exeDll;
         string localDir = System.IO.Path.Combine(
           Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GuiLingGuiLing");
         string localDll = System.IO.Path.Combine(localDir, name);
         try {
           System.IO.Directory.CreateDirectory(localDir);
-          if (System.IO.File.Exists(exeDll)) {
-            bool copy = !System.IO.File.Exists(localDll);
-            if (!copy) {
-              try {
-                copy = System.IO.File.GetLastWriteTimeUtc(exeDll) >
-                       System.IO.File.GetLastWriteTimeUtc(localDll);
-              } catch { }
-            }
-            if (copy) System.IO.File.Copy(exeDll, localDll, true);
-          }
         } catch { }
         if (System.IO.File.Exists(localDll)) return localDll;
-        if (System.IO.File.Exists(exeDll)) return exeDll;
       } catch { }
       return null;
     }
@@ -204,7 +195,10 @@ namespace GenDaLangDu {
               string s = sb.ToString();
               int bar = s.IndexOf('|');
               string text = bar >= 0 ? s.Substring(bar + 1) : s;
-              if (text.Length > 0 && CommitReceived != null) CommitReceived(text);
+              if (text.Length > 0 && CommitReceived != null) {
+                uint pid = (uint)wParam.ToInt64();
+                CommitReceived(pid, text);
+              }
             }
           }
         } catch { }

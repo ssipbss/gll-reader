@@ -350,7 +350,6 @@ static BOOL IsAllowedProcess(void) {
 static void SendCommit(const WCHAR *text, int len) {
   if (len <= 0 || len >= GLL_MAX_TEXT) return;
   if (!HasCjk(text, len)) return;
-  if (!IsForegroundProcess()) return;
   /* 同一文本在 400ms 内只发一次（TSF/IMM 双通道可能重复） */
   if (wcsncmp(g_lastSent, text, len) == 0 && g_lastSent[len] == 0 &&
       (GetTickCount() - g_lastSentTick) < 400) return;
@@ -362,10 +361,16 @@ static void SendCommit(const WCHAR *text, int len) {
     hwnd = FindWindowW(GLL_WND_CLASS, NULL);
     g_hwndCache = hwnd;
   }
-  if (!hwnd) return;
+  if (!hwnd) {
+    Dbg(L"SendCommit skip: no target window");
+    return;
+  }
   /* 零阻塞通知：全局原子 + PostMessage，绝不等待接收方 */
   if (!g_commitMsg) g_commitMsg = RegisterWindowMessageW(L"GLL_TSF_COMMIT");
-  if (!g_commitMsg) return;
+  if (!g_commitMsg) {
+    Dbg(L"SendCommit skip: RegisterWindowMessage fail");
+    return;
+  }
   int cap = len;
   if (cap > 220) cap = 220;
   WCHAR atomText[256];
@@ -373,8 +378,17 @@ static void SendCommit(const WCHAR *text, int len) {
   wcsncat(atomText, text, cap);
   atomText[255] = 0;
   ATOM atom = GlobalAddAtomW(atomText);
-  if (!atom) return;
-  PostMessageW(hwnd, g_commitMsg, (WPARAM)GetCurrentProcessId(), (LPARAM)atom);
+  if (!atom) {
+    Dbg(L"SendCommit skip: GlobalAddAtom fail");
+    return;
+  }
+  BOOL posted = PostMessageW(hwnd, g_commitMsg, (WPARAM)GetCurrentProcessId(), (LPARAM)atom);
+  if (!posted) {
+    Dbg(L"SendCommit skip: PostMessage fail err=%lu", GetLastError());
+    GlobalDeleteAtom(atom);
+    return;
+  }
+  Dbg(L"SendCommit OK text=[%s] atom=%u", text, atom);
 }
 
 /* 进程内读取 IMM 输入法的上屏结果（读霸同款思路，适用于不走 TSF 文档的应用） */
@@ -647,9 +661,15 @@ static LRESULT CALLBACK HookProc(int nCode, WPARAM wParam, LPARAM lParam) {
             InitTsf(st);
           }
         }
-      } else if (!st->advisedCtx) {
+      } else if (!st->advisedCtx && msg && (
+          msg->message == 0x0100 || msg->message == 0x0101 ||   /* WM_KEYDOWN/UP */
+          msg->message == WM_IME_STARTCOMPOSITION ||
+          msg->message == WM_IME_COMPOSITION ||
+          msg->message == WM_IME_ENDCOMPOSITION ||
+          msg->message == 0x0102 ||                              /* WM_CHAR */
+          msg->message == 0x0006 || msg->message == 0x0007)) {   /* WM_ACTIVATE/SETFOCUS */
         st->retryCount++;
-        if (st->retryCount % 40 == 0) {
+        if (st->retryCount % 4 == 0) {
           TryAdoptFocus(st);
         }
       }

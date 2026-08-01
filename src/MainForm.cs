@@ -724,11 +724,12 @@ namespace GenDaLangDu {
       return true;
     }
 
-    private void OnTsfCommit(string text) {
+    private void OnTsfCommit(uint pid, string text) {
       try {
         if (!_listening) return;
         if (string.IsNullOrEmpty(text)) return;
         if (IsOurProcessForeground()) return;
+        if (!IsCommitFromForeground(pid)) return;
         if (!HasChineseText(text)) return;
         string spk = PunctSpokenForm(FilterForSpeech(text));
         if (string.IsNullOrEmpty(spk)) return;
@@ -740,6 +741,24 @@ namespace GenDaLangDu {
         _lastTsfCommitAt = DateTime.Now;
         DebugLog("TSF_COMMIT [" + text + "]");
       } catch { }
+    }
+
+    private static bool IsCommitFromForeground(uint pid) {
+      try {
+        IntPtr fg = Native.GetForegroundWindow();
+        if (fg == IntPtr.Zero) return true;
+        uint fgPid;
+        Native.GetWindowThreadProcessId(fg, out fgPid);
+        if (fgPid == pid) return true;
+        using (System.Diagnostics.Process p1 = System.Diagnostics.Process.GetProcessById((int)pid)) {
+          using (System.Diagnostics.Process p2 = System.Diagnostics.Process.GetProcessById((int)fgPid)) {
+            return string.Equals(p1.ProcessName, p2.ProcessName,
+                                 StringComparison.OrdinalIgnoreCase);
+          }
+        }
+      } catch {
+        return true;
+      }
     }
 
     private static string StripCompositionLetters(string s) {
