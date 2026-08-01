@@ -250,6 +250,7 @@ namespace GenDaLangDu {
       _cboZh.Location = new Point(96, 42);
       _cboZh.Width = 330;
       _cboZh.DropDownWidth = 430;
+      _cboZh.SelectedIndexChanged += delegate { OnVoiceSelected(); };
 
       Label l2 = new Label();
       l2.Text = "字母语音";
@@ -262,6 +263,7 @@ namespace GenDaLangDu {
       _cboEn.Location = new Point(96, 74);
       _cboEn.Width = 330;
       _cboEn.DropDownWidth = 430;
+      _cboEn.SelectedIndexChanged += delegate { OnVoiceSelected(); };
 
       Label l3 = new Label();
       l3.Text = "语速";
@@ -466,6 +468,10 @@ namespace GenDaLangDu {
       if (e.IsAutoRepeat) return;
       _lastKeyAt = DateTime.Now;
       DebugLog("KEY vk=0x" + e.Vk.ToString("X") + " scan=0x" + e.Scan.ToString("X"));
+      if (!IsAltKey(e.Vk) && AltDown()) {
+        DebugLog("ALT_COMBO_IGNORED vk=0x" + e.Vk.ToString("X"));
+        return;
+      }
 
       ImeState ime = _ime.GetState();
       bool composing = ime.IsComposing;
@@ -788,6 +794,19 @@ namespace GenDaLangDu {
       return false;
     }
 
+    private static bool IsAltKey(uint vk) {
+      return vk == 0x12 || vk == 0xA4 || vk == 0xA5;
+    }
+
+    private static bool AltDown() {
+      try {
+        if ((Native.GetAsyncKeyState(0x12) & 0x8000) != 0) return true;
+        if ((Native.GetAsyncKeyState(0xA4) & 0x8000) != 0) return true;
+        if ((Native.GetAsyncKeyState(0xA5) & 0x8000) != 0) return true;
+      } catch { }
+      return false;
+    }
+
     private bool IsOurProcessForeground() {
       try {
         IntPtr h = Native.GetForegroundWindow();
@@ -884,6 +903,15 @@ namespace GenDaLangDu {
     private static string VoiceNameFromItem(string item) {
       int idx = item.IndexOf(" |");
       return idx >= 0 ? item.Substring(0, idx) : item;
+    }
+
+    private void OnVoiceSelected() {
+      if (_loading) return;
+      try {
+        _speaker.RefreshVoices(CurrentZhVoice(), CurrentEnVoice());
+        SaveSettings();
+        DebugLog("VOICE_SELECTED zh=[" + CurrentZhVoice() + "] en=[" + CurrentEnVoice() + "]");
+      } catch { }
     }
 
     private void ApplyRateVolume() {
