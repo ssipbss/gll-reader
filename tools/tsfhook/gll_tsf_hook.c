@@ -365,7 +365,7 @@ static BOOL IsAllowedProcess(void) {
   WCHAR *dot = wcsrchr(name, L'.');
   if (dot && lstrcmpiW(dot, L".exe") == 0) *dot = 0;
   static const WCHAR *allowed[] = {
-    L"wps", L"et", L"wpp", L"chrome", L"msedge", L"bilibili",
+    L"wps", L"et", L"wpp", L"bilibili",
     L"\u54D3\u54A9\u54D3\u54A9",
     L"notepad", L"everything", L"winword", L"excel", L"powerpnt",
     L"notepad++"

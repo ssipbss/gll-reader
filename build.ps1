@@ -85,6 +85,7 @@ foreach ($name in @('gll_tsf_hook64.dll', 'gll_tsf_hook32.dll')) {
   $dstDll12 = Join-Path $finalOut ($name -replace '\.dll$', '_v12.dll')
   $dstDll13 = Join-Path $finalOut ($name -replace '\.dll$', '_v13.dll')
   $dstDll14 = Join-Path $finalOut ($name -replace '\.dll$', '_v14.dll')
+  $dstDll15 = Join-Path $finalOut ($name -replace '\.dll$', '_v15.dll')
   try {
     Copy-Item $srcDll $dstDll -Force
   } catch {
@@ -154,6 +155,11 @@ foreach ($name in @('gll_tsf_hook64.dll', 'gll_tsf_hook32.dll')) {
     Copy-Item $srcDll $dstDll14 -Force
   } catch {
     Write-Warning ("无法更新 " + ($name -replace '\.dll$', '_v14.dll'))
+  }
+  try {
+    Copy-Item $srcDll $dstDll15 -Force
+  } catch {
+    Write-Warning ("无法更新 " + ($name -replace '\.dll$', '_v15.dll'))
   }
 }
 Write-Output ("BUILD OK: " + (Join-Path $finalOut '归零归零.exe'))
