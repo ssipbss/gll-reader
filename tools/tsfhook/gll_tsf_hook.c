@@ -268,7 +268,6 @@ typedef struct GllThreadState {
   BOOL initialized;
   int initing;
   int retryCount;
-  int cleanupCount;
   int lastFocusHr;
   ITfThreadMgr *tm;
   ITfSource *src;
@@ -367,7 +366,7 @@ static BOOL IsAllowedProcess(void) {
   if (dot && lstrcmpiW(dot, L".exe") == 0) *dot = 0;
   static const WCHAR *allowed[] = {
     L"wps", L"et", L"wpp", L"chrome", L"msedge", L"bilibili",
-    L"\u54D3\u54A9\u54D3\u54A9", L"chatgpt", L"codex",
+    L"\u54D3\u54A9\u54D3\u54A9",
     L"notepad", L"everything", L"winword", L"excel", L"powerpnt",
     L"notepad++"
   };
@@ -705,25 +704,6 @@ static LRESULT CALLBACK HookProc(int nCode, WPARAM wParam, LPARAM lParam) {
             if (st->retryCount % 4 == 0) {
               if (!st->initialized) InitTsf(st);
               else TryAdoptFocus(st);
-            }
-          } else {
-            /* 自愈：主程序窗口消失（退出/崩溃）时解除TSF挂载，防止状态累积 */
-            st->cleanupCount++;
-            if ((st->cleanupCount % 8) == 0) {
-              HWND hwnd = FindWindowW(GLL_WND_CLASS, NULL);
-              if (!hwnd) {
-                Dbg(L"app window gone, cleanup TSF");
-                UnadviseContext(st);
-                if (st->src && st->tm) {
-                  st->src->lpVtbl->UnadviseSink(st->src, st->tmCookie);
-                  st->tm->lpVtbl->Deactivate(st->tm);
-                  st->src->lpVtbl->Release(st->src);
-                  st->tm->lpVtbl->Release(st->tm);
-                  st->src = NULL;
-                  st->tm = NULL;
-                }
-                st->initialized = FALSE;
-              }
             }
           }
         }
