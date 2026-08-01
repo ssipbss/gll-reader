@@ -313,6 +313,20 @@ static BOOL IsForegroundProcess(void) {
   return pid == GetCurrentProcessId();
 }
 
+/* 本线程是否为键盘输入线程（拥有焦点窗口，或属于前台顶层窗口） */
+static BOOL IsInputThread(void) {
+  GUITHREADINFO gui;
+  memset(&gui, 0, sizeof(gui));
+  gui.cbSize = sizeof(gui);
+  if (GetGUIThreadInfo(GetCurrentThreadId(), &gui) && gui.hwndFocus) return TRUE;
+  HWND fg = GetForegroundWindow();
+  if (fg) {
+    DWORD pid;
+    return GetWindowThreadProcessId(fg, &pid) == GetCurrentThreadId();
+  }
+  return FALSE;
+}
+
 /* 只对白名单内的进程初始化 TSF，避免影响聊天/其他无关程序 */
 static BOOL IsAllowedProcess(void) {
   WCHAR path[MAX_PATH];
@@ -644,23 +658,7 @@ static LRESULT CALLBACK HookProc(int nCode, WPARAM wParam, LPARAM lParam) {
     GllThreadState *st = GetThreadState();
     if (st) {
       if (!st->initialized) {
-        HWND fg = GetForegroundWindow();
-        if (fg) {
-          DWORD pid;
-          DWORD fgTid = GetWindowThreadProcessId(fg, &pid);
-          DWORD targetTid = fgTid;
-          GUITHREADINFO gui;
-          memset(&gui, 0, sizeof(gui));
-          gui.cbSize = sizeof(gui);
-          if (GetGUIThreadInfo(fgTid, &gui) && gui.hwndFocus) {
-            DWORD fp;
-            DWORD ft = GetWindowThreadProcessId(gui.hwndFocus, &fp);
-            if (fp == GetCurrentProcessId()) targetTid = ft;
-          }
-          if (targetTid == GetCurrentThreadId()) {
-            InitTsf(st);
-          }
-        }
+        if (IsInputThread()) InitTsf(st);
       } else if (!st->advisedCtx && msg && (
           msg->message == 0x0100 || msg->message == 0x0101 ||   /* WM_KEYDOWN/UP */
           msg->message == WM_IME_STARTCOMPOSITION ||

@@ -60,6 +60,7 @@ namespace GenDaLangDu {
           string name = p.ProcessName.ToLowerInvariant();
           return name == "wps" || name == "et" || name == "wpp" ||
                  name == "chrome" || name == "msedge" || name == "bilibili" ||
+                 name == "chatgpt" || name == "codex" ||
                  name == "notepad" || name == "everything" ||
                  name == "winword" || name == "excel" || name == "powerpnt" ||
                  name == "notepad++";
