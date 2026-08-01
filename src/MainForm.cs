@@ -933,10 +933,15 @@ namespace GenDaLangDu {
       diff = null;
       if (oldT == null || caret < 0) return false;
       int delta = newT.Length - oldT.Length;
-      if (delta < 1 || delta > 12) return false;
-      int start = caret - delta;
-      if (start < 0 || start + delta > newT.Length) return false;
-      diff = newT.Substring(start, delta);
+      int oldCaret = caret - delta;
+      if (oldCaret < 0 || oldCaret > oldT.Length) return false;
+      if (caret < 0 || caret > newT.Length) return false;
+      int maxP = Math.Min(caret, oldCaret);
+      int p = 0;
+      while (p < maxP && newT[p] == oldT[p]) p++;
+      int len = caret - p;
+      if (len <= 0 || len > 12) return false;
+      diff = newT.Substring(p, len);
       return true;
     }
 
