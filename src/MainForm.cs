@@ -607,6 +607,8 @@ namespace GenDaLangDu {
               _lastDeleteSpeakAt = DateTime.Now;
               SpeakZh(keyName);
             }
+          } else {
+            SpeakZh(keyName);
           }
         }
         ScheduleImeCheck();
@@ -669,9 +671,9 @@ namespace GenDaLangDu {
               _lastPunctName = pn;
               _punctKeyPending = true;
               _lastPunctKeyAt = DateTime.Now;
-              SchedulePunctSpeak(pn);
+              SchedulePunctSpeak(c);
             } else if (_chkPunct.Checked) {
-              SchedulePunctSpeak(pn);
+              SchedulePunctSpeak(c);
             }
             continue;
           }
@@ -852,9 +854,10 @@ namespace GenDaLangDu {
     }
 
     /// <summary>标点延迟200ms朗读：让慢半拍的差异通道先读中文，保证语音顺序与键盘一致。</summary>
-    private void SchedulePunctSpeak(string pn) {
+    private void SchedulePunctSpeak(char c) {
+      string pn = KeyTranslator.PunctName(c);
       if (string.IsNullOrEmpty(pn)) return;
-      _pendingPuncts.Append(pn);
+      _pendingPuncts.Append(c);
       if (_punctTimer == null) {
         _punctTimer = new System.Windows.Forms.Timer();
         _punctTimer.Interval = 200;
