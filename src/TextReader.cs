@@ -37,8 +37,12 @@ namespace GenDaLangDu {
         // TSF 钩子激活时，被 TSF 覆盖的应用（WPS/浏览器/记事本等）的中文
         // 提交由钩子直接上报；UI 线程绝不向这些应用发起 UIA/COM 调用，
         // 否则应用忙（如 WPS 新建文档）时调用会卡死整个程序
-        string wpsText = WpsComReader.GetFocusedText(out elementId, out diag, out caret);
-        if (wpsText != null) return wpsText;
+        // TSF 钩子激活时 WPS 提交由钩子上报；不再后台轮询 WPS COM，
+        // 避免给 WPS 打字增加负载（COM 兜底仅在钩子未安装时使用）
+        if (!TsfHook.IsActive) {
+          string wpsText = WpsComReader.GetFocusedText(out elementId, out diag, out caret);
+          if (wpsText != null) return wpsText;
+        }
         if (!TsfHook.IsActive || !IsTsfCoveredForeground()) {
           AutomationElement el = AutomationElement.FocusedElement;
           return ReadFocused(el, out elementId, out diag, out caret);

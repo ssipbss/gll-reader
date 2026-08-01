@@ -264,6 +264,7 @@ struct GllSink {
 
 typedef struct GllThreadState {
   BOOL initialized;
+  int initing;
   int retryCount;
   int lastFocusHr;
   ITfThreadMgr *tm;
@@ -482,14 +483,15 @@ static void AdviseContext(GllThreadState *st, ITfContext *ctx) {
 }
 
 static void InitTsf(GllThreadState *st) {
-  if (st->initialized) return;
-  if (!IsAllowedProcess()) return;
-  st->initialized = TRUE; /* 防止递归重入 */
+  if (st->initialized || st->initing) return;
+  if (!IsAllowedProcess()) { st->initialized = TRUE; return; }
+  st->initing = TRUE;
   HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
   if (hr == RPC_E_CHANGED_MODE) {
     hr = CoInitialize(NULL);
     if (FAILED(hr) && hr != RPC_E_CHANGED_MODE) {
       Dbg(L"CoInitialize fail hr=0x%08x", (unsigned)hr);
+      st->initing = FALSE;
       return;
     }
   }
@@ -498,6 +500,7 @@ static void InitTsf(GllThreadState *st) {
                         &IID_ITfThreadMgr, (void**)&tm);
   if (FAILED(hr) || !tm) {
     Dbg(L"CoCreateInstance ThreadMgr fail hr=0x%08x", (unsigned)hr);
+    st->initing = FALSE;
     return;
   }
   DWORD tid = 0;
@@ -505,12 +508,14 @@ static void InitTsf(GllThreadState *st) {
   if (FAILED(hr)) {
     Dbg(L"Activate fail hr=0x%08x", (unsigned)hr);
     tm->lpVtbl->Release(tm);
+    st->initing = FALSE;
     return;
   }
   ITfSource *src = NULL;
   hr = tm->lpVtbl->QueryInterface(tm, &IID_ITfSource, (void**)&src);
   if (FAILED(hr) || !src) {
     tm->lpVtbl->Release(tm);
+    st->initing = FALSE;
     return;
   }
   DWORD cookie = 0;
@@ -519,11 +524,14 @@ static void InitTsf(GllThreadState *st) {
     Dbg(L"AdviseSink thread fail hr=0x%08x", (unsigned)hr);
     src->lpVtbl->Release(src);
     tm->lpVtbl->Release(tm);
+    st->initing = FALSE;
     return;
   }
   st->tm = tm;
   st->src = src;
   st->tmCookie = cookie;
+  st->initialized = TRUE;
+  st->initing = FALSE;
   Dbg(L"TSF init ok tid=%lu", tid);
   TryAdoptFocus(st);
 }
@@ -690,7 +698,8 @@ static LRESULT CALLBACK HookProc(int nCode, WPARAM wParam, LPARAM lParam) {
           msg->message == 0x0006 || msg->message == 0x0007)) {   /* WM_ACTIVATE/SETFOCUS */
         st->retryCount++;
         if (st->retryCount % 4 == 0) {
-          TryAdoptFocus(st);
+          if (!st->initialized) InitTsf(st);
+          else TryAdoptFocus(st);
         }
       }
     }
