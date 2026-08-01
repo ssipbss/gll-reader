@@ -911,9 +911,7 @@ namespace GenDaLangDu {
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e) {
-      if (!_testMode && !_closingByTrayExit) {
-        e.Cancel = true;
-        Hide();
+      if (_testMode && !_closingByTrayExit) {
         base.OnFormClosing(e);
         return;
       }

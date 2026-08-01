@@ -16,6 +16,7 @@ namespace GenDaLangDu {
     private readonly BlockingCollection<WorkItem> _queue = new BlockingCollection<WorkItem>();
     private int _prevBatchCount = 1;
     private DateTime _lastEnqueueAt = DateTime.MinValue;
+    private DateTime _prevEnqueueAt = DateTime.MinValue;
     private readonly ManualResetEvent _ready = new ManualResetEvent(false);
     private Thread _thread;
     private dynamic _zh;
@@ -83,6 +84,14 @@ namespace GenDaLangDu {
       items.Add(first);
       WorkItem tmp;
       bool got = _queue.TryTake(out tmp, 0);
+      bool burst = _prevEnqueueAt != DateTime.MinValue && (DateTime.Now - _prevEnqueueAt).TotalMilliseconds < 1800;
+      bool cjkItem = HasCjk(first.Text);
+      int waitMs = 0;
+      if (!got && burst && cjkItem) waitMs = 1100;
+      if (waitMs > 0) {
+        Thread.Sleep(waitMs);
+        got = _queue.TryTake(out tmp, 0);
+      }
       if (got) items.Add(tmp);
       while (_queue.TryTake(out tmp, 0)) items.Add(tmp);
       Diag("W_DRAINED " + items.Count);
@@ -164,6 +173,14 @@ namespace GenDaLangDu {
         }
         if (Log != null) Log(tag + "_ERR:" + ex.Message);
       }
+    }
+
+    private static bool HasCjk(string s) {
+      if (string.IsNullOrEmpty(s)) return false;
+      foreach (char c in s) {
+        if ((c >= 0x4E00 && c <= 0x9FFF) || (c >= 0x3400 && c <= 0x4DBF) || (c >= 0xF900 && c <= 0xFAFF)) return true;
+      }
+      return false;
     }
 
     private static string BuildSayAs(string text) {
@@ -314,6 +331,7 @@ namespace GenDaLangDu {
     public void SpeakZh(string text) {
       if (string.IsNullOrEmpty(text)) return;
       if (Log != null) Log("ZH:" + text);
+      _prevEnqueueAt = _lastEnqueueAt;
       _lastEnqueueAt = DateTime.Now;
       _queue.Add(new WorkItem { Kind = ItemKind.SpeakZh, Text = text });
     }
@@ -321,6 +339,7 @@ namespace GenDaLangDu {
     public void SpeakEn(string text) {
       if (string.IsNullOrEmpty(text)) return;
       if (Log != null) Log("EN:" + text);
+      _prevEnqueueAt = _lastEnqueueAt;
       _lastEnqueueAt = DateTime.Now;
       _queue.Add(new WorkItem { Kind = ItemKind.SpeakEn, Text = text });
     }
