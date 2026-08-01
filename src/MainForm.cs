@@ -16,6 +16,7 @@ namespace GenDaLangDu {
     private System.Windows.Forms.Timer _autoExitTimer;
     private System.Windows.Forms.Timer _injectTimer;
     private System.Windows.Forms.Timer _uiTimer;
+    private System.Windows.Forms.Timer _elevTimer;
     private NotifyIcon _tray;
     private ContextMenuStrip _trayMenu;
     private AppSettings _settings = new AppSettings();
@@ -38,6 +39,8 @@ namespace GenDaLangDu {
     private DateTime _lastSpokenAt = DateTime.MinValue;
     private DateTime _lastDeleteSpeakAt = DateTime.MinValue;
     private DateTime _lastZhCommitAt = DateTime.MinValue;
+    private bool _selfElevated;
+    private DateTime _lastElevationAskAt = DateTime.MinValue;
     private bool _shiftArmed;
     private bool _shiftArmValue;
     private DateTime _shiftArmedAt = DateTime.MinValue;
@@ -90,6 +93,11 @@ namespace GenDaLangDu {
       _uiTimer = new System.Windows.Forms.Timer();
       _uiTimer.Interval = 100;
       _uiTimer.Tick += delegate { CheckUiText(); };
+
+      _selfElevated = SelfElevated();
+      _elevTimer = new System.Windows.Forms.Timer();
+      _elevTimer.Interval = 3000;
+      _elevTimer.Tick += delegate { CheckElevation(); };
 
       if (_testMode) {
         ShowInTaskbar = false;
@@ -444,6 +452,7 @@ namespace GenDaLangDu {
         _lastUiText = null;
         _imeTimer.Start();
         _uiTimer.Start();
+        _elevTimer.Start();
       }
       UpdateUi();
     }
@@ -455,6 +464,7 @@ namespace GenDaLangDu {
       _mouseHook.Uninstall();
       _imeTimer.Stop();
       _uiTimer.Stop();
+      _elevTimer.Stop();
       _speaker.Stop();
       UpdateUi();
     }
@@ -676,9 +686,24 @@ namespace GenDaLangDu {
       string t = TextReader.GetFocusedText(out elementId);
       if (t == null) return;
       if (_lastUiElement != elementId) {
+        string prevText = _lastUiText;
         _lastUiElement = elementId;
         _lastUiText = t;
         DebugLog("UI_ELEMENT [" + (elementId ?? "") + "]");
+        if (prevText != null && t != null && t.Length > prevText.Length && t.StartsWith(prevText)) {
+          string ins = t.Substring(prevText.Length);
+          DebugLog("UI_ELEMENT_DIFF [" + ins + "]");
+          if (ins.Length <= 20 && ins.Trim().Length > 0) {
+            string spk = PunctSpokenForm(FilterForSpeech(ins));
+            if (!string.IsNullOrEmpty(spk) && !RecentlySpoken(spk)) {
+              _composing = false;
+              SpeakZh(spk);
+              RememberSpoken(spk);
+              MarkChineseCommit();
+              DebugLog("UI_INSERT [" + ins + "]");
+            }
+          }
+        }
         return;
       }
       if (_composing) {
@@ -856,6 +881,59 @@ namespace GenDaLangDu {
         if ((Native.GetAsyncKeyState(0xA3) & 0x8000) != 0) return true;
       } catch { }
       return false;
+    }
+
+    private void CheckElevation() {
+      if (_selfElevated || _testMode) return;
+      if ((DateTime.Now - _lastElevationAskAt).TotalMilliseconds < 60000) return;
+      try {
+        IntPtr h = Native.GetForegroundWindow();
+        if (h == IntPtr.Zero) return;
+        uint pid;
+        Native.GetWindowThreadProcessId(h, out pid);
+        if (pid == 0 || pid == (uint)Process.GetCurrentProcess().Id) return;
+        if (!ProcessElevated(pid)) return;
+        DebugLog("ELEV_FOREGROUND pid=" + pid);
+        _lastElevationAskAt = DateTime.Now;
+        ProcessStartInfo psi = new ProcessStartInfo();
+        psi.FileName = Application.ExecutablePath;
+        psi.UseShellExecute = true;
+        psi.Verb = "runas";
+        Process.Start(psi);
+        _closingByTrayExit = true;
+        Close();
+      } catch {
+      }
+    }
+
+    private static bool ProcessElevated(uint pid) {
+      try {
+        IntPtr h = Native.OpenProcess(0x1000, false, pid);
+        if (h == IntPtr.Zero) return false;
+        IntPtr tok = IntPtr.Zero;
+        bool ok = false;
+        try {
+          if (Native.OpenProcessToken(h, 0x0008, out tok)) {
+            uint info;
+            uint ret;
+            ok = Native.GetTokenInformation(tok, 20, out info, 4, out ret) && info != 0;
+          }
+        } finally {
+          if (tok != IntPtr.Zero) Native.CloseHandle(tok);
+          Native.CloseHandle(h);
+        }
+        return ok;
+      } catch {
+        return false;
+      }
+    }
+
+    private static bool SelfElevated() {
+      try {
+        return ProcessElevated((uint)Process.GetCurrentProcess().Id);
+      } catch {
+        return false;
+      }
     }
 
     private bool IsOurProcessForeground() {
