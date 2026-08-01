@@ -157,8 +157,9 @@ namespace GenDaLangDu {
       }
       if (en.Length > 0) {
         if (Log != null) Log("EN_MERGE [" + en + "]");
-        if (_enIsRt && _enRt != null) SpeakRtSync(_enRt, en.ToString(), "EN", Math.Min(10, _rate + 2), true);
-        else SpeakSync(_en, en.ToString(), "EN", ref _lastRateEn, ref _lastVolumeEn, Math.Min(10, _rate + 2), true);
+        int enRate = Math.Max(-10, _rate - 2);
+        if (_enIsRt && _enRt != null) SpeakRtSync(_enRt, en.ToString(), "EN", enRate, true);
+        else SpeakSync(_en, en.ToString(), "EN", ref _lastRateEn, ref _lastVolumeEn, enRate, true);
       }
       if (stop) _disposed = true;
     }

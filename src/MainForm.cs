@@ -495,6 +495,8 @@ namespace GenDaLangDu {
               ScheduleImeCheck();
               return;
             }
+            ScheduleImeCheck();
+            return;
           }
         } else if (e.Vk == 0x08 && _composing) {
           CheckUiText();
@@ -502,6 +504,8 @@ namespace GenDaLangDu {
             ScheduleImeCheck();
             return;
           }
+          ScheduleImeCheck();
+          return;
         } else if (_composing && IsCandidateControl(e.Vk)) {
           CheckUiText();
           if (_composing) {
@@ -509,6 +513,8 @@ namespace GenDaLangDu {
             ScheduleImeCheck();
             return;
           }
+          ScheduleImeCheck();
+          return;
         }
         if (e.Vk == 0x0D || e.Vk == 0x1B) _composing = false;
       }
