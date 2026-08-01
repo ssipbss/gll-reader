@@ -17,6 +17,7 @@ namespace GenDaLangDu {
     private System.Windows.Forms.Timer _injectTimer;
     private System.Windows.Forms.Timer _uiTimer;
     private System.Windows.Forms.Timer _elevTimer;
+    private System.Windows.Forms.Timer _hbTimer;
     private NotifyIcon _tray;
     private ContextMenuStrip _trayMenu;
     private AppSettings _settings = new AppSettings();
@@ -98,6 +99,10 @@ namespace GenDaLangDu {
       _elevTimer = new System.Windows.Forms.Timer();
       _elevTimer.Interval = 3000;
       _elevTimer.Tick += delegate { CheckElevation(); };
+
+      _hbTimer = new System.Windows.Forms.Timer();
+      _hbTimer.Interval = 30000;
+      _hbTimer.Tick += delegate { DebugLog("HB"); };
 
       if (_testMode) {
         ShowInTaskbar = false;
@@ -452,7 +457,7 @@ namespace GenDaLangDu {
         _lastUiText = null;
         _imeTimer.Start();
         _uiTimer.Start();
-        _elevTimer.Start();
+        _hbTimer.Start();
       }
       UpdateUi();
     }
@@ -465,6 +470,7 @@ namespace GenDaLangDu {
       _imeTimer.Stop();
       _uiTimer.Stop();
       _elevTimer.Stop();
+      _hbTimer.Stop();
       _speaker.Stop();
       UpdateUi();
     }
@@ -683,8 +689,20 @@ namespace GenDaLangDu {
         return;
       }
       string elementId;
-      string t = TextReader.GetFocusedText(out elementId);
-      if (t == null) return;
+      string uiDiag;
+      string t = TextReader.GetFocusedText(out elementId, out uiDiag);
+      if (t == null) {
+        if (_lastUiElement != elementId) {
+          _lastUiElement = elementId;
+          DebugLog("UI_TEXT_NULL [" + (elementId ?? "") + "] " + (uiDiag ?? ""));
+        }
+        return;
+      }
+      if (t.Length == 0 && _lastUiElement != elementId) {
+        _lastUiElement = elementId;
+        DebugLog("UI_TEXT_EMPTY [" + (elementId ?? "") + "] " + (uiDiag ?? ""));
+        return;
+      }
       if (_lastUiElement != elementId) {
         string prevText = _lastUiText;
         _lastUiElement = elementId;
@@ -1104,6 +1122,8 @@ namespace GenDaLangDu {
       StopListening();
       if (_imeTimer != null) _imeTimer.Stop();
       if (_uiTimer != null) _uiTimer.Stop();
+      if (_elevTimer != null) _elevTimer.Stop();
+      if (_hbTimer != null) _hbTimer.Stop();
       if (_tray != null) {
         _tray.Visible = false;
         _tray.Dispose();
