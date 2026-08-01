@@ -35,6 +35,8 @@ namespace GenDaLangDu {
     private string _lastPunctName;
     private bool _punctKeyPending;
     private DateTime _lastPunctKeyAt = DateTime.MinValue;
+    private readonly System.Collections.Generic.List<RecentChar> _recentChars =
+      new System.Collections.Generic.List<RecentChar>();
     private DateTime _lastChineseCommitAt = DateTime.MinValue;
     private IntPtr _lastChineseCommitHwnd = IntPtr.Zero;
     private bool _composing;
@@ -48,6 +50,11 @@ namespace GenDaLangDu {
     private bool _selfElevated;
     private DateTime _lastElevationAskAt = DateTime.MinValue;
     private const int MaxUiDiffLen = 10;
+
+    private struct RecentChar {
+      public char Char;
+      public DateTime At;
+    }
     private bool _shiftArmed;
     private bool _englishBeforeArm;
     private bool _shiftArmValue;
@@ -505,7 +512,8 @@ namespace GenDaLangDu {
       if (e.IsUp) return;
       if (e.IsAutoRepeat) return;
       if (e.Vk != 0x08 && e.Vk != 0x2E) _lastDeleteSpeakAt = DateTime.MinValue;
-      if (!(e.Vk >= 0x41 && e.Vk <= 0x5A) &&
+      bool packetIsLetter = e.Vk == 0xE7 && KeyTranslator.IsLatinLetter((char)(e.Scan & 0xFFFF));
+      if (!(e.Vk >= 0x41 && e.Vk <= 0x5A) && !packetIsLetter &&
           e.Vk != 0x10 && e.Vk != 0xA0 && e.Vk != 0xA1) {
         if (_shiftArmed) _imeEnglishMode = _englishBeforeArm;
         _shiftArmed = false;
@@ -638,10 +646,9 @@ namespace GenDaLangDu {
           if (KeyTranslator.IsCjk(c)) {
             _composing = false;
             MarkChineseCommit();
-            if (e.Vk != 0xE7) {
-              SpeakZh(c.ToString());
-              RememberSpoken(c.ToString());
-            }
+            SpeakZh(c.ToString());
+            RememberSpoken(c.ToString());
+            RememberRecentChar(c);
             continue;
           }
           string pn = KeyTranslator.PunctName(c);
@@ -708,6 +715,31 @@ namespace GenDaLangDu {
       _lastSpokenAt = DateTime.Now;
     }
 
+    private void RememberRecentChar(char c) {
+      try {
+        _recentChars.Add(new RecentChar { Char = c, At = DateTime.Now });
+        if (_recentChars.Count > 40) _recentChars.RemoveRange(0, _recentChars.Count - 40);
+      } catch { }
+    }
+
+    /// <summary>提交文本的每个汉字是否都在最近1.5秒内被按键通道单独读过（避免双读）。</summary>
+    private bool AllCharsSpokenRecently(string text) {
+      if (string.IsNullOrEmpty(text)) return false;
+      DateTime now = DateTime.Now;
+      foreach (char c in text) {
+        if (!KeyTranslator.IsCjk(c)) continue;
+        bool found = false;
+        for (int i = _recentChars.Count - 1; i >= 0; i--) {
+          if (_recentChars[i].Char == c && (now - _recentChars[i].At).TotalMilliseconds < 1500) {
+            found = true;
+            break;
+          }
+        }
+        if (!found) return false;
+      }
+      return true;
+    }
+
     private bool TrySpeakInserted(string ins) {
       if (string.IsNullOrEmpty(ins)) return false;
       if ((DateTime.Now - _lastTsfCommitAt).TotalMilliseconds < 600) return false;
@@ -716,6 +748,7 @@ namespace GenDaLangDu {
       string spk = PunctSpokenForm(FilterForSpeech(clean));
       if (string.IsNullOrEmpty(spk)) return false;
       if (!HasChineseText(clean)) return false;
+      if (AllCharsSpokenRecently(clean)) return false;
       if (!AllowPunctSpeak(clean)) return false;
       if (RecentlySpoken(spk)) return false;
       _composing = false;
@@ -733,6 +766,7 @@ namespace GenDaLangDu {
         if (IsOurProcessForeground()) return;
         if (!IsCommitFromForeground(pid)) return;
         if (!HasChineseText(text)) return;
+        if (AllCharsSpokenRecently(text)) return;
         string spk = PunctSpokenForm(FilterForSpeech(text));
         if (string.IsNullOrEmpty(spk)) return;
         if (RecentlySpoken(spk)) return;
