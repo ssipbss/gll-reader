@@ -84,15 +84,8 @@ namespace GenDaLangDu {
       items.Add(first);
       WorkItem tmp;
       bool got = _queue.TryTake(out tmp, 0);
-      bool burst = _prevEnqueueAt != DateTime.MinValue && (DateTime.Now - _prevEnqueueAt).TotalMilliseconds < 1800;
-      bool cjkItem = HasCjk(first.Text);
-      int waitMs = 0;
-      if (!got && burst && cjkItem) waitMs = 1100;
-      if (waitMs > 0) {
-        Thread.Sleep(waitMs);
-        got = _queue.TryTake(out tmp, 0);
-      }
       if (got) items.Add(tmp);
+      while (_queue.TryTake(out tmp, 0)) items.Add(tmp);
       while (_queue.TryTake(out tmp, 0)) items.Add(tmp);
       Diag("W_DRAINED " + items.Count);
       System.Text.StringBuilder zh = new System.Text.StringBuilder();
@@ -155,23 +148,106 @@ namespace GenDaLangDu {
       if (stop) _disposed = true;
     }
 
+    private static System.Media.SoundPlayer _currentPlayer;
+
     private int _lastRateZh = int.MinValue;
     private int _lastVolumeZh = int.MinValue;
     private int _lastRateEn = int.MinValue;
     private int _lastVolumeEn = int.MinValue;
     private void SpeakSync(dynamic voice, string text, string tag, ref int lastRate, ref int lastVolume, int rate, bool xml) {
+      if (voice == null) return;
       try {
         if (rate != lastRate) { voice.Rate = rate; lastRate = rate; }
         if (_volume != lastVolume) { voice.Volume = _volume; lastVolume = _volume; }
       } catch { }
+      string wav = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "gll_speech.wav");
       try {
-        if (xml) voice.Speak(BuildSayAs(text), 8);
-        else voice.Speak(text, 0);
-      } catch (Exception ex) {
-        if (xml) {
-          try { voice.Speak(text, 0); } catch { }
+        dynamic fs = Activator.CreateInstance(Type.GetTypeFromProgID("SAPI.SpFileStream"));
+        try { fs.Open(wav, 3); } catch { }
+        voice.AudioOutputStream = fs;
+        try {
+          if (xml) voice.Speak(BuildSayAs(text), 8);
+          else voice.Speak(text, 0);
+        } catch (Exception ex) {
+          if (xml) { try { voice.Speak(text, 0); } catch { } }
+          if (Log != null) Log(tag + "_ERR:" + ex.Message);
         }
+        try { fs.Close(); } catch { }
+        try { voice.AudioOutputStream = null; } catch { }
+      } catch (Exception ex) {
         if (Log != null) Log(tag + "_ERR:" + ex.Message);
+        return;
+      }
+      try {
+        string playPath = TrimWavSilence(wav);
+        using (System.Media.SoundPlayer p = new System.Media.SoundPlayer(playPath)) {
+          p.PlaySync();
+          _currentPlayer = null;
+        }
+      } catch (Exception ex) {
+        if (Log != null) Log(tag + "_ERR:" + ex.Message);
+      }
+    }
+
+    private static string TrimWavSilence(string path) {
+      try {
+        byte[] b = System.IO.File.ReadAllBytes(path);
+        if (b.Length < 44) return path;
+        int pos = 12;
+        int sampleRate = 22050;
+        int channels = 1;
+        int bits = 16;
+        int dataOffset = -1;
+        int dataSize = 0;
+        while (pos < b.Length - 8) {
+          string id = System.Text.Encoding.ASCII.GetString(b, pos, 4);
+          int size = BitConverter.ToInt32(b, pos + 4);
+          if (id == "fmt ") {
+            channels = BitConverter.ToInt16(b, pos + 10);
+            sampleRate = BitConverter.ToInt32(b, pos + 12);
+            bits = BitConverter.ToInt16(b, pos + 22);
+          } else if (id == "data") {
+            dataOffset = pos + 8;
+            dataSize = size;
+            break;
+          }
+          pos += 8 + size + (size % 2);
+        }
+        if (dataOffset < 0 || dataSize <= 0) return path;
+        int bps = (bits / 8) * channels;
+        if (bps <= 0) return path;
+        int total = dataSize / bps;
+        if (total <= 0) return path;
+        int threshold = bits == 16 ? 60 : 6;
+        int first = -1;
+        int last = -1;
+        for (int i = 0; i < total; i++) {
+          int v = bits == 16
+            ? BitConverter.ToInt16(b, dataOffset + i * bps)
+            : (b[dataOffset + i * bps] - 128);
+          if (Math.Abs(v) > threshold) {
+            if (first < 0) first = i;
+            last = i;
+          }
+        }
+        if (first < 0 || last < first) return path;
+        int margin = Math.Max(1, (int)(sampleRate * 0.015));
+        int start = Math.Max(0, first - margin);
+        int end = Math.Min(total, last + margin);
+        int newSize = (end - start) * bps;
+        if (newSize <= 0) return path;
+        byte[] nb = new byte[dataOffset + newSize];
+        Array.Copy(b, 0, nb, 0, dataOffset);
+        Array.Copy(b, dataOffset + start * bps, nb, dataOffset, newSize);
+        byte[] s1 = BitConverter.GetBytes(newSize);
+        Array.Copy(s1, 0, nb, dataOffset - 4, 4);
+        byte[] s2 = BitConverter.GetBytes(nb.Length - 8);
+        Array.Copy(s2, 0, nb, 4, 4);
+        string trimmed = path + ".t.wav";
+        System.IO.File.WriteAllBytes(trimmed, nb);
+        return trimmed;
+      } catch {
+        return path;
       }
     }
 
@@ -191,6 +267,7 @@ namespace GenDaLangDu {
     private static void Diag(string msg) { }
 
     private static void Cancel(dynamic voice) {
+      try { if (_currentPlayer != null) _currentPlayer.Stop(); } catch { }
       try { if (voice != null) voice.Speak("", 2); } catch { }
     }
 

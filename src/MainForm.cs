@@ -122,10 +122,10 @@ namespace GenDaLangDu {
         _autoExitTimer.Start();
       } else {
         StartListening();
+        ShowInTaskbar = false;
+        WindowState = FormWindowState.Minimized;
       }
-      LogTest("STARTED hook=" + _hook.IsInstalled + " listening=" + _listening);
     }
-
     private void LogTest(string line) {
       if (!_testMode || _testLog == null) return;
       try { File.AppendAllText(_testLog, DateTime.Now.ToString("HH:mm:ss.fff") + " " + line + "\r\n", new System.Text.UTF8Encoding(false)); } catch { }
@@ -409,6 +409,7 @@ namespace GenDaLangDu {
     }
 
     private void ShowWindow() {
+      ShowInTaskbar = true;
       Show();
       WindowState = FormWindowState.Normal;
       Opacity = 1;
@@ -416,7 +417,6 @@ namespace GenDaLangDu {
       BringToFront();
       Activate();
     }
-
     private void ToggleListening() {
       if (_listening) StopListening();
       else StartListening();
@@ -911,7 +911,9 @@ namespace GenDaLangDu {
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e) {
-      if (_testMode && !_closingByTrayExit) {
+      if (!_testMode && !_closingByTrayExit) {
+        e.Cancel = true;
+        Hide();
         base.OnFormClosing(e);
         return;
       }
