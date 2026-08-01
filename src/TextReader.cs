@@ -24,9 +24,15 @@ namespace GenDaLangDu {
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
-    public static string GetFocusedText(out string elementId, out string diag) {
+    private sealed class ReadResult {
+      public string Text;
+      public int Caret;
+    }
+
+    public static string GetFocusedText(out string elementId, out string diag, out int caret) {
       elementId = null;
       diag = null;
+      caret = -1;
       try {
         AutomationElement el = AutomationElement.FocusedElement;
         if (el == null) return null;
@@ -47,16 +53,22 @@ namespace GenDaLangDu {
                  " val=" + el.TryGetCurrentPattern(ValuePattern.Pattern, out pv) +
                  " txt=" + el.TryGetCurrentPattern(TextPattern.Pattern, out pt);
         } catch { }
-        string t = TryReadText(el);
-        if (t != null) return t;
+        ReadResult rr = TryRead(el);
+        if (rr != null) {
+          caret = rr.Caret;
+          return rr.Text;
+        }
         AutomationElement cur = el;
         for (int i = 0; i < 12; i++) {
           try { cur = TreeWalker.ControlViewWalker.GetParent(cur); } catch { break; }
           if (cur == null) break;
-          t = TryReadText(cur);
-          if (t != null) return t;
+          rr = TryRead(cur);
+          if (rr != null) {
+            caret = rr.Caret;
+            return rr.Text;
+          }
         }
-        string longText = null;
+        ReadResult longText = null;
         try {
           System.Collections.Generic.Queue<AutomationElement> queue =
             new System.Collections.Generic.Queue<AutomationElement>();
@@ -66,10 +78,13 @@ namespace GenDaLangDu {
           while (queue.Count > 0 && scanned < 300) {
             AutomationElement child = queue.Dequeue();
             scanned++;
-            t = TryReadText(child);
-            if (t != null) {
-              if (t.Length <= 1000) return t;
-              if (longText == null || t.Length < longText.Length) longText = t;
+            rr = TryRead(child);
+            if (rr != null) {
+              if (rr.Text.Length <= 1000) {
+                caret = rr.Caret;
+                return rr.Text;
+              }
+              if (longText == null || rr.Text.Length < longText.Text.Length) longText = rr;
             }
             AutomationElement next = TreeWalker.ControlViewWalker.GetFirstChild(child);
             while (next != null) {
@@ -78,14 +93,20 @@ namespace GenDaLangDu {
             }
           }
         } catch { }
-        if (longText != null) return longText;
+        if (longText != null) {
+          caret = longText.Caret;
+          return longText.Text;
+        }
         try {
           IntPtr hwndFocus = GetFocusedHwnd();
           if (hwndFocus != IntPtr.Zero) {
             AutomationElement byHwnd = AutomationElement.FromHandle(hwndFocus);
             if (byHwnd != null) {
-              t = TryReadText(byHwnd);
-              if (t != null) return t;
+              rr = TryRead(byHwnd);
+              if (rr != null) {
+                caret = rr.Caret;
+                return rr.Text;
+              }
             }
           }
         } catch { }
@@ -108,13 +129,13 @@ namespace GenDaLangDu {
       return IntPtr.Zero;
     }
 
-    private static string TryReadText(AutomationElement el) {
+    private static ReadResult TryRead(AutomationElement el) {
       if (el == null) return null;
       try {
         object pattern;
         if (el.TryGetCurrentPattern(ValuePattern.Pattern, out pattern)) {
           string v = ((ValuePattern)pattern).Current.Value;
-          if (!string.IsNullOrEmpty(v)) return v;
+          if (!string.IsNullOrEmpty(v)) return new ReadResult { Text = v, Caret = -1 };
         }
         if (el.TryGetCurrentPattern(TextPattern.Pattern, out pattern)) {
           TextPattern tp = (TextPattern)pattern;
@@ -122,16 +143,28 @@ namespace GenDaLangDu {
           try {
             TextPatternRange tail = range.Clone();
             tail.MoveEndpointByUnit(TextPatternRangeEndpoint.Start, TextUnit.Character, -5000);
-            return tail.GetText(-1);
+            string text = tail.GetText(-1);
+            int caret = -1;
+            try {
+              TextPatternRange[] sel = tp.GetSelection();
+              if (sel != null && sel.Length > 0) {
+                TextPatternRange r = tail.Clone();
+                r.MoveEndpointByRange(TextPatternRangeEndpoint.End, sel[0], TextPatternRangeEndpoint.Start);
+                caret = r.GetText(-1).Length;
+                if (caret < 0) caret = 0;
+                if (caret > text.Length) caret = text.Length;
+              }
+            } catch { }
+            return new ReadResult { Text = text, Caret = caret };
           } catch {
             try {
               TextPatternRange[] visible = tp.GetVisibleRanges();
               if (visible != null && visible.Length > 0) {
                 string v = visible[0].GetText(20000);
-                if (!string.IsNullOrEmpty(v)) return v;
+                if (!string.IsNullOrEmpty(v)) return new ReadResult { Text = v, Caret = -1 };
               }
             } catch { }
-            return range.GetText(20000);
+            return new ReadResult { Text = range.GetText(20000), Caret = -1 };
           }
         }
       } catch { }

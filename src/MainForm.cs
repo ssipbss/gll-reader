@@ -29,6 +29,7 @@ namespace GenDaLangDu {
     private string _lastResult = "";
     private string _lastUiText = null;
     private string _lastUiElement = null;
+    private int _lastCaret = -1;
     private string _lastSpoken = "";
     private DateTime _lastPinyinKeyAt = DateTime.MinValue;
     private DateTime _lastChineseCommitAt = DateTime.MinValue;
@@ -701,7 +702,8 @@ namespace GenDaLangDu {
       }
       string elementId;
       string uiDiag;
-      string t = TextReader.GetFocusedText(out elementId, out uiDiag);
+      int caret;
+      string t = TextReader.GetFocusedText(out elementId, out uiDiag, out caret);
       if (t == null) {
         if (_lastUiElement != elementId) {
           _lastUiElement = elementId;
@@ -718,11 +720,10 @@ namespace GenDaLangDu {
         string prevText = _lastUiText;
         _lastUiElement = elementId;
         _lastUiText = t;
+        _lastCaret = caret;
         DebugLog("UI_ELEMENT [" + (elementId ?? "") + "]");
         if (prevText != null && t != null && t.Length > prevText.Length && t.StartsWith(prevText)) {
-          string ins = t.Substring(prevText.Length);
-          ins = LastLine(ins);
-          ins = StripHeading(ins);
+          string ins = ComputeInserted(prevText, t, caret);
           DebugLog("UI_ELEMENT_DIFF [" + ins + "]");
           if (ins.Length <= 20 && ins.Trim().Length > 0) {
             if (ins.Length > MaxUiDiffLen) {
@@ -748,10 +749,9 @@ namespace GenDaLangDu {
       }
       if (_composing) {
         if (_lastUiText != null && t != _lastUiText) {
-          string ins = DiffInserted(_lastUiText, t);
-          ins = LastLine(ins);
-          ins = StripHeading(ins);
+          string ins = ComputeInserted(_lastUiText, t, caret);
           _lastUiText = t;
+          _lastCaret = caret;
           if (!string.IsNullOrEmpty(ins) && ins.Length <= 20 && ins.Trim().Length > 0) {
             DebugLog("UI_DIFF [" + ins + "]");
             if (ins.Length > MaxUiDiffLen) {
@@ -772,19 +772,20 @@ namespace GenDaLangDu {
         if ((DateTime.Now - _lastPinyinKeyAt).TotalMilliseconds > 2000) {
           _composing = false;
           _lastUiText = t;
+          _lastCaret = caret;
         }
         return;
       }
       if (_lastUiText == null) {
         _lastUiText = t;
         _lastUiElement = elementId;
+        _lastCaret = caret;
         return;
       }
       if (t == _lastUiText) return;
-      string inserted = DiffInserted(_lastUiText, t);
-      inserted = LastLine(inserted);
-      inserted = StripHeading(inserted);
+      string inserted = ComputeInserted(_lastUiText, t, caret);
       _lastUiText = t;
+      _lastCaret = caret;
       if (string.IsNullOrEmpty(inserted)) return;
       DebugLog("UI_DIFF [" + inserted + "]");
       if (!_chkClickSpeak.Checked && _lastMouseDownAt > _lastKeyAt) {
@@ -924,6 +925,25 @@ namespace GenDaLangDu {
       }
       if (sNew >= p) return newT.Substring(p, sNew - p + 1);
       return "";
+    }
+
+    private static bool TryCaretDiff(string oldT, string newT, int caret, out string diff) {
+      diff = null;
+      if (oldT == null || caret < 0) return false;
+      int delta = newT.Length - oldT.Length;
+      if (delta < 1 || delta > 12) return false;
+      int start = caret - delta;
+      if (start < 0 || start + delta > newT.Length) return false;
+      diff = newT.Substring(start, delta);
+      return true;
+    }
+
+    private static string ComputeInserted(string oldT, string newT, int caret) {
+      string d;
+      if (!TryCaretDiff(oldT, newT, caret, out d)) d = DiffInserted(oldT, newT);
+      d = LastLine(d);
+      d = StripHeading(d);
+      return d;
     }
 
     private static bool IsModifierKey(uint vk) {
