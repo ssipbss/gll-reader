@@ -750,10 +750,11 @@ namespace GenDaLangDu {
       if (_composing) {
         if (_lastUiText != null && t != _lastUiText) {
           string ins = ComputeInserted(_lastUiText, t, caret);
+          int delta = t.Length - _lastUiText.Length;
           _lastUiText = t;
           _lastCaret = caret;
           if (!string.IsNullOrEmpty(ins) && ins.Length <= 20 && ins.Trim().Length > 0) {
-            DebugLog("UI_DIFF [" + ins + "]");
+            DebugLog("UI_DIFF [" + ins + "] caret=" + caret + " delta=" + delta);
             if (ins.Length > MaxUiDiffLen) {
               DebugLog("UI_DIFF_SKIP_LONG [" + ins + "]");
             } else {
@@ -784,10 +785,11 @@ namespace GenDaLangDu {
       }
       if (t == _lastUiText) return;
       string inserted = ComputeInserted(_lastUiText, t, caret);
+      int deltaLen = t.Length - _lastUiText.Length;
       _lastUiText = t;
       _lastCaret = caret;
       if (string.IsNullOrEmpty(inserted)) return;
-      DebugLog("UI_DIFF [" + inserted + "]");
+      DebugLog("UI_DIFF [" + inserted + "] caret=" + caret + " delta=" + deltaLen);
       if (!_chkClickSpeak.Checked && _lastMouseDownAt > _lastKeyAt) {
         _lastMouseDownAt = DateTime.MinValue;
         DebugLog("UI_CLICK_IGNORED [" + inserted + "]");
@@ -940,7 +942,13 @@ namespace GenDaLangDu {
 
     private static string ComputeInserted(string oldT, string newT, int caret) {
       string d;
-      if (!TryCaretDiff(oldT, newT, caret, out d)) d = DiffInserted(oldT, newT);
+      if (TryCaretDiff(oldT, newT, caret, out d)) {
+        d = LastLine(d);
+        d = StripHeading(d);
+        return d;
+      }
+      if (caret >= 0) return "";
+      d = DiffInserted(oldT, newT);
       d = LastLine(d);
       d = StripHeading(d);
       return d;
