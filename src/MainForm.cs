@@ -718,7 +718,7 @@ namespace GenDaLangDu {
               return;
             }
             string spk = PunctSpokenForm(FilterForSpeech(ins));
-            if (!string.IsNullOrEmpty(spk) && !RecentlySpoken(spk)) {
+            if (!string.IsNullOrEmpty(spk) && HasChineseText(ins) && !RecentlySpoken(spk)) {
               _composing = false;
               SpeakZh(spk);
               RememberSpoken(spk);
@@ -736,7 +736,7 @@ namespace GenDaLangDu {
           if (!string.IsNullOrEmpty(ins) && ins.Length <= 20 && ins.Trim().Length > 0) {
             DebugLog("UI_DIFF [" + ins + "]");
             string spk = PunctSpokenForm(FilterForSpeech(ins));
-            if (!string.IsNullOrEmpty(spk) && !RecentlySpoken(spk)) {
+            if (!string.IsNullOrEmpty(spk) && HasChineseText(ins) && !RecentlySpoken(spk)) {
               _composing = false;
               SpeakZh(spk);
               RememberSpoken(spk);
@@ -771,11 +771,26 @@ namespace GenDaLangDu {
       if (inserted.Trim().Length == 0) return;
       string speakText = PunctSpokenForm(FilterForSpeech(inserted));
       if (string.IsNullOrEmpty(speakText)) return;
+      if (!HasChineseText(inserted)) return;
       if (RecentlySpoken(speakText)) return;
       SpeakZh(speakText);
       RememberSpoken(speakText);
       MarkChineseCommit();
       DebugLog("UI_INSERT [" + inserted + "]");
+    }
+
+    private static bool HasChineseText(string s) {
+      if (string.IsNullOrEmpty(s)) return false;
+      foreach (char c in s) {
+        if (KeyTranslator.IsCjk(c)) return true;
+        if (c >= 0x3000 && c <= 0x9FFF) return true;
+        bool fullWidth = c >= 0xFF00 && c <= 0xFFEF &&
+          !(c >= 0xFF10 && c <= 0xFF19) &&
+          !(c >= 0xFF21 && c <= 0xFF3A) &&
+          !(c >= 0xFF41 && c <= 0xFF5A);
+        if (fullWidth) return true;
+      }
+      return false;
     }
 
     private static string FilterForSpeech(string s) {
