@@ -480,18 +480,27 @@ namespace GenDaLangDu {
       if (chineseMode) {
         if (e.Vk == 0x20) {
           if (_composing) {
-            _composing = false;
+            CheckUiText();
+            if (_composing) {
+              _composing = false;
+              MarkChineseCommit();
+              ScheduleImeCheck();
+              return;
+            }
+          }
+        } else if (e.Vk == 0x08 && _composing) {
+          CheckUiText();
+          if (_composing) {
+            ScheduleImeCheck();
+            return;
+          }
+        } else if (_composing && IsCandidateControl(e.Vk)) {
+          CheckUiText();
+          if (_composing) {
             MarkChineseCommit();
             ScheduleImeCheck();
             return;
           }
-        } else if (e.Vk == 0x08 && _composing) {
-          ScheduleImeCheck();
-          return;
-        } else if (_composing && IsCandidateControl(e.Vk)) {
-          MarkChineseCommit();
-          ScheduleImeCheck();
-          return;
         }
         if (e.Vk == 0x0D || e.Vk == 0x1B) _composing = false;
       }
@@ -532,7 +541,7 @@ namespace GenDaLangDu {
             continue;
           }
           if (c == ' ') {
-            if (!chineseMode && _chkFunc.Checked) SpeakZh("空格");
+            if (!_composing && _chkFunc.Checked) SpeakZh("空格");
             continue;
           }
           if (char.IsDigit(c)) {
@@ -557,7 +566,7 @@ namespace GenDaLangDu {
             continue;
           }
           if (char.IsWhiteSpace(c)) {
-            if (!chineseMode && _chkFunc.Checked) SpeakZh("空格");
+            if (!_composing && _chkFunc.Checked) SpeakZh("空格");
             continue;
           }
         }
@@ -626,6 +635,22 @@ namespace GenDaLangDu {
         return;
       }
       if (_composing) {
+        if (_lastUiText != null && t != _lastUiText) {
+          string ins = DiffInserted(_lastUiText, t);
+          _lastUiText = t;
+          if (!string.IsNullOrEmpty(ins) && ins.Length <= 20 && ins.Trim().Length > 0) {
+            DebugLog("UI_DIFF [" + ins + "]");
+            string spk = PunctSpokenForm(FilterForSpeech(ins));
+            if (!string.IsNullOrEmpty(spk) && !RecentlySpoken(spk)) {
+              _composing = false;
+              SpeakZh(spk);
+              RememberSpoken(spk);
+              MarkChineseCommit();
+              DebugLog("UI_INSERT [" + ins + "]");
+              return;
+            }
+          }
+        }
         if ((DateTime.Now - _lastPinyinKeyAt).TotalMilliseconds > 2000) {
           _composing = false;
           _lastUiText = t;
