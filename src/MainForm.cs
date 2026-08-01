@@ -42,6 +42,7 @@ namespace GenDaLangDu {
     private DateTime _lastZhCommitAt = DateTime.MinValue;
     private bool _selfElevated;
     private DateTime _lastElevationAskAt = DateTime.MinValue;
+    private const int MaxUiDiffLen = 10;
     private bool _shiftArmed;
     private bool _shiftArmValue;
     private DateTime _shiftArmedAt = DateTime.MinValue;
@@ -724,18 +725,22 @@ namespace GenDaLangDu {
           ins = StripHeading(ins);
           DebugLog("UI_ELEMENT_DIFF [" + ins + "]");
           if (ins.Length <= 20 && ins.Trim().Length > 0) {
-            if (!_chkClickSpeak.Checked && _lastMouseDownAt > _lastKeyAt) {
-              _lastMouseDownAt = DateTime.MinValue;
-              DebugLog("UI_CLICK_IGNORED [" + ins + "]");
-              return;
-            }
-            string spk = PunctSpokenForm(FilterForSpeech(ins));
-            if (!string.IsNullOrEmpty(spk) && HasChineseText(ins) && !RecentlySpoken(spk)) {
-              _composing = false;
-              SpeakZh(spk);
-              RememberSpoken(spk);
-              MarkChineseCommit();
-              DebugLog("UI_INSERT [" + ins + "]");
+            if (ins.Length > MaxUiDiffLen) {
+              DebugLog("UI_DIFF_SKIP_LONG [" + ins + "]");
+            } else {
+              if (!_chkClickSpeak.Checked && _lastMouseDownAt > _lastKeyAt) {
+                _lastMouseDownAt = DateTime.MinValue;
+                DebugLog("UI_CLICK_IGNORED [" + ins + "]");
+                return;
+              }
+              string spk = PunctSpokenForm(FilterForSpeech(ins));
+              if (!string.IsNullOrEmpty(spk) && HasChineseText(ins) && !RecentlySpoken(spk)) {
+                _composing = false;
+                SpeakZh(spk);
+                RememberSpoken(spk);
+                MarkChineseCommit();
+                DebugLog("UI_INSERT [" + ins + "]");
+              }
             }
           }
         }
@@ -749,14 +754,18 @@ namespace GenDaLangDu {
           _lastUiText = t;
           if (!string.IsNullOrEmpty(ins) && ins.Length <= 20 && ins.Trim().Length > 0) {
             DebugLog("UI_DIFF [" + ins + "]");
-            string spk = PunctSpokenForm(FilterForSpeech(ins));
-            if (!string.IsNullOrEmpty(spk) && HasChineseText(ins) && !RecentlySpoken(spk)) {
-              _composing = false;
-              SpeakZh(spk);
-              RememberSpoken(spk);
-              MarkChineseCommit();
-              DebugLog("UI_INSERT [" + ins + "]");
-              return;
+            if (ins.Length > MaxUiDiffLen) {
+              DebugLog("UI_DIFF_SKIP_LONG [" + ins + "]");
+            } else {
+              string spk = PunctSpokenForm(FilterForSpeech(ins));
+              if (!string.IsNullOrEmpty(spk) && HasChineseText(ins) && !RecentlySpoken(spk)) {
+                _composing = false;
+                SpeakZh(spk);
+                RememberSpoken(spk);
+                MarkChineseCommit();
+                DebugLog("UI_INSERT [" + ins + "]");
+                return;
+              }
             }
           }
         }
@@ -785,6 +794,10 @@ namespace GenDaLangDu {
       }
       if (inserted.Length > 20) return;
       if (inserted.Trim().Length == 0) return;
+      if (inserted.Length > MaxUiDiffLen) {
+        DebugLog("UI_DIFF_SKIP_LONG [" + inserted + "]");
+        return;
+      }
       string speakText = PunctSpokenForm(FilterForSpeech(inserted));
       if (string.IsNullOrEmpty(speakText)) return;
       if (!HasChineseText(inserted)) return;
