@@ -54,11 +54,6 @@ namespace GenDaLangDu {
     }
 
     internal static bool IsTsfCoveredForeground() {
-      return IsChromiumForeground() || IsTsfProcessForeground();
-    }
-
-    /// <summary>仅TSF进程名单（WPS/Office/Bilibili/记事本等）——这些应用中中文由TSF提交朗读。</summary>
-    internal static bool IsTsfProcessForeground() {
       try {
         IntPtr h = Native.GetForegroundWindow();
         if (h == IntPtr.Zero) return false;
@@ -77,23 +72,6 @@ namespace GenDaLangDu {
         return false;
       }
     }
-
-    private static bool IsChromiumForeground() {
-      try {
-        IntPtr h = Native.GetForegroundWindow();
-        if (h == IntPtr.Zero) return false;
-        System.Text.StringBuilder cls = new System.Text.StringBuilder(128);
-        if (GetClassName(h, cls, 128) > 0) {
-          string c = cls.ToString();
-          return c == "Chrome_WidgetWin_1" || c == "Chrome_WidgetWin_0" ||
-                 c == "CefBrowserWindow" || c == "Chrome_RenderWidgetHostHWND";
-        }
-      } catch { }
-      return false;
-    }
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
 
     private static string ReadFocused(AutomationElement el, out string elementId, out string diag, out int caret) {
       elementId = null;

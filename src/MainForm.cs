@@ -45,6 +45,7 @@ namespace GenDaLangDu {
     private DateTime _lastDeleteSpeakAt = DateTime.MinValue;
     private DateTime _lastZhCommitAt = DateTime.MinValue;
     private DateTime _lastTsfCommitAt = DateTime.MinValue;
+    private DateTime _lastPacketCjkAt = DateTime.MinValue;
     private bool _selfElevated;
     private DateTime _lastElevationAskAt = DateTime.MinValue;
     private const int MaxUiDiffLen = 10;
@@ -643,7 +644,8 @@ namespace GenDaLangDu {
           if (KeyTranslator.IsCjk(c)) {
             _composing = false;
             MarkChineseCommit();
-            if (!(TsfHook.IsActive && TextReader.IsTsfProcessForeground())) {
+            _lastPacketCjkAt = DateTime.Now;
+            if (!(TsfHook.IsActive && TextReader.IsTsfCoveredForeground())) {
               SpeakZh(c.ToString());
               RememberSpoken(c.ToString());
             }
@@ -721,6 +723,8 @@ namespace GenDaLangDu {
 
     private bool TrySpeakInserted(string ins) {
       if (string.IsNullOrEmpty(ins)) return false;
+      /* 按键通道刚读到汉字提交（VK_PACKET）时，差异通道让路，避免双读 */
+      if ((DateTime.Now - _lastPacketCjkAt).TotalMilliseconds < 2000) return false;
       if ((DateTime.Now - _lastTsfCommitAt).TotalMilliseconds < 600) return false;
       string clean = StripCompositionLetters(ins);
       if (clean.Length == 0) return false;
