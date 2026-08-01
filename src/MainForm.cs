@@ -38,6 +38,8 @@ namespace GenDaLangDu {
     private string _lastPunctName;
     private bool _punctKeyPending;
     private DateTime _lastPunctKeyAt = DateTime.MinValue;
+    private System.Windows.Forms.Timer _punctTimer;
+    private readonly System.Text.StringBuilder _pendingPuncts = new System.Text.StringBuilder();
     private DateTime _lastChineseCommitAt = DateTime.MinValue;
     private IntPtr _lastChineseCommitHwnd = IntPtr.Zero;
     private bool _composing;
@@ -599,11 +601,9 @@ namespace GenDaLangDu {
           else if (e.Vk == 0x20 && (DateTime.Now - _lastZhCommitAt).TotalMilliseconds < 500) {
             DebugLog("SPACE_AFTER_COMMIT_SKIP");
           }
-          else if ((e.Vk == 0x08 || e.Vk == 0x2E) &&
-                   (DateTime.Now - _lastDeleteSpeakAt).TotalMilliseconds < 800) {
-            DebugLog("DELETE_COALESCE vk=0x" + e.Vk.ToString("X"));
+          else if (e.Vk == 0x08 || e.Vk == 0x2E) {
+            DebugLog("DELETE_SILENT vk=0x" + e.Vk.ToString("X"));
           } else {
-            if (e.Vk == 0x08 || e.Vk == 0x2E) _lastDeleteSpeakAt = DateTime.Now;
             SpeakZh(keyName);
           }
         }
@@ -667,15 +667,9 @@ namespace GenDaLangDu {
               _lastPunctName = pn;
               _punctKeyPending = true;
               _lastPunctKeyAt = DateTime.Now;
-              if (!RecentlySpoken(pn)) {
-                SpeakZh(pn);
-                RememberSpoken(pn);
-              }
+              SchedulePunctSpeak(pn);
             } else if (_chkPunct.Checked) {
-              if (!RecentlySpoken(pn)) {
-                SpeakZh(pn);
-                RememberSpoken(pn);
-              }
+              SchedulePunctSpeak(pn);
             }
             continue;
           }
@@ -736,6 +730,16 @@ namespace GenDaLangDu {
       if ((DateTime.Now - _lastPacketCjkAt).TotalMilliseconds < 2000) return false;
       if ((DateTime.Now - _lastTsfCommitAt).TotalMilliseconds < 600) return false;
       string clean = StripCompositionLetters(ins);
+      if (clean.Length == 0) return false;
+      /* 末尾标点若正由按键通道延迟朗读（200ms内），从差异文本剥离，避免双读 */
+      while (clean.Length > 0) {
+        string pn = KeyTranslator.PunctName(clean[clean.Length - 1]);
+        if (pn != null && _punctKeyPending && _lastPunctName == pn) {
+          clean = clean.Substring(0, clean.Length - 1);
+        } else {
+          break;
+        }
+      }
       if (clean.Length == 0) return false;
       string spk = PunctSpokenForm(FilterForSpeech(clean));
       if (string.IsNullOrEmpty(spk)) return false;
@@ -841,6 +845,35 @@ namespace GenDaLangDu {
       _punctKeyPending = false;
       _lastPunctName = null;
       return true;
+    }
+
+    /// <summary>标点延迟200ms朗读：让慢半拍的差异通道先读中文，保证语音顺序与键盘一致。</summary>
+    private void SchedulePunctSpeak(string pn) {
+      if (string.IsNullOrEmpty(pn)) return;
+      _pendingPuncts.Append(pn);
+      if (_punctTimer == null) {
+        _punctTimer = new System.Windows.Forms.Timer();
+        _punctTimer.Interval = 200;
+        _punctTimer.Tick += delegate { FlushPunctSpeak(); };
+      }
+      _punctTimer.Stop();
+      _punctTimer.Start();
+    }
+
+    private void FlushPunctSpeak() {
+      if (_pendingPuncts.Length == 0) return;
+      string text = _pendingPuncts.ToString();
+      _pendingPuncts.Clear();
+      foreach (char c in text) {
+        string pn = KeyTranslator.PunctName(c);
+        if (pn == null) continue;
+        if (!RecentlySpoken(pn)) {
+          SpeakZh(pn);
+          RememberSpoken(pn);
+        }
+      }
+      _punctKeyPending = false;
+      _lastPunctName = null;
     }
 
     private void CheckUiText() {
