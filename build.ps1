@@ -32,6 +32,12 @@ $mainLines.Add('/r:System.Xml.dll')
 $mainLines.Add('/r:' + $uia1)
 $mainLines.Add('/r:' + $uia2)
 $mainLines.Add('/r:' + $gac)
+$winrtDir = Join-Path $root 'tools\winrt'
+$mainLines.Add('/r:System.Runtime.dll')
+$mainLines.Add('/r:System.Runtime.WindowsRuntime.dll')
+$mainLines.Add('/r:tools\winrt\Windows.WinMD')
+$mainLines.Add('/r:tools\winrt\Windows.Foundation.FoundationContract.winmd')
+$mainLines.Add('/r:tools\winrt\Windows.Foundation.UniversalApiContract.winmd')
 $mainLines.Add('/out:bin\app.exe')
 Get-ChildItem $src -Filter '*.cs' | Sort-Object Name | ForEach-Object { $mainLines.Add('src\' + $_.Name) }
 

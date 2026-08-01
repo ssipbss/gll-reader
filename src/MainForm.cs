@@ -529,6 +529,7 @@ namespace GenDaLangDu {
       }
 
       if (chineseMode && e.Vk >= 0x41 && e.Vk <= 0x5A && !ShiftOrCaps() && !_imeEnglishMode) {
+        CheckUiText();
         _composing = true;
         _lastPinyinKeyAt = DateTime.Now;
       }

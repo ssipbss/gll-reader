@@ -1,8 +1,11 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Threading;
+using Windows.Media.SpeechSynthesis;
+using Windows.Storage.Streams;
+using System.Runtime.InteropServices.WindowsRuntime;
 
 namespace GenDaLangDu {
   public sealed class Speaker : IDisposable {
@@ -26,6 +29,11 @@ namespace GenDaLangDu {
     private volatile int _rate = 1;
     private volatile int _volume = 100;
     private bool _disposed;
+    private SpeechSynthesizer _zhRt;
+    private SpeechSynthesizer _enRt;
+    private volatile bool _zhIsRt;
+    private volatile bool _enIsRt;
+    private static CancellationTokenSource _rtCancel = new CancellationTokenSource();
 
     public Action<string> Log { get; set; }
 
@@ -65,6 +73,11 @@ namespace GenDaLangDu {
         if (Log != null) Log("SPEAKER_INIT_ERR:" + ex.Message);
         Diag("W_INIT_ERR " + ex.Message);
       }
+      try {
+        _zhRt = new SpeechSynthesizer();
+        _enRt = new SpeechSynthesizer();
+        Diag("W_RT_OK");
+      } catch { }
       _ready.Set();
 
       while (!_disposed) {
@@ -139,11 +152,13 @@ namespace GenDaLangDu {
 
       if (zh.Length > 0) {
         if (Log != null) Log("ZH_MERGE [" + zh + "]");
-        SpeakSync(_zh, zh.ToString(), "ZH", ref _lastRateZh, ref _lastVolumeZh, _rate, false);
+        if (_zhIsRt && _zhRt != null) SpeakRtSync(_zhRt, zh.ToString(), "ZH", _rate, false);
+        else SpeakSync(_zh, zh.ToString(), "ZH", ref _lastRateZh, ref _lastVolumeZh, _rate, false);
       }
       if (en.Length > 0) {
         if (Log != null) Log("EN_MERGE [" + en + "]");
-        SpeakSync(_en, en.ToString(), "EN", ref _lastRateEn, ref _lastVolumeEn, Math.Min(10, _rate + 2), true);
+        if (_enIsRt && _enRt != null) SpeakRtSync(_enRt, en.ToString(), "EN", Math.Min(10, _rate + 2), true);
+        else SpeakSync(_en, en.ToString(), "EN", ref _lastRateEn, ref _lastVolumeEn, Math.Min(10, _rate + 2), true);
       }
       if (stop) _disposed = true;
     }
@@ -187,6 +202,75 @@ namespace GenDaLangDu {
       } catch (Exception ex) {
         if (Log != null) Log(tag + "_ERR:" + ex.Message);
       }
+    }
+
+    private void SpeakRtSync(SpeechSynthesizer synth, string text, string tag, int rate, bool xml) {
+      if (synth == null) return;
+      try {
+        try {
+          synth.Options.SpeakingRate = Math.Max(0.5, Math.Min(6.0, 1.0 + rate * 0.1));
+        } catch { }
+        string wav = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "gll_speech_rt.wav");
+        try {
+          SpeechSynthesisStream stream = null;
+          try {
+            var op = xml ? synth.SynthesizeSsmlToStreamAsync(BuildSayAs(text))
+                         : synth.SynthesizeTextToStreamAsync(text);
+            stream = op.AsTask(_rtCancel.Token).Result;
+          } catch {
+            if (xml) {
+              var op2 = synth.SynthesizeTextToStreamAsync(text);
+              stream = op2.AsTask(_rtCancel.Token).Result;
+            } else {
+              throw;
+            }
+          }
+          using (stream) {
+            using (var reader = new DataReader(stream.GetInputStreamAt(0))) {
+              uint size = (uint)stream.Size;
+              var load = reader.LoadAsync(size).AsTask(_rtCancel.Token);
+              load.Wait();
+              byte[] buf = new byte[size];
+              reader.ReadBytes(buf);
+              System.IO.File.WriteAllBytes(wav, buf);
+            }
+          }
+          string playPath = TrimWavSilence(wav);
+          using (System.Media.SoundPlayer p = new System.Media.SoundPlayer(playPath)) {
+            p.PlaySync();
+            _currentPlayer = null;
+          }
+        } catch (Exception ex) {
+          if (Log != null) Log(tag + "_ERR:" + ex.Message);
+        }
+      } catch (Exception ex) {
+        if (Log != null) Log(tag + "_ERR:" + ex.Message);
+      }
+    }
+
+    private static bool IsNaturalName(string desc) {
+      return !string.IsNullOrEmpty(desc) &&
+             desc.IndexOf("natural", StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private static bool VoiceMatches(string a, string b) {
+      if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;
+      if (a.IndexOf(b, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+      if (b.IndexOf(a, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+      return false;
+    }
+
+    private static bool TrySelectRtVoice(SpeechSynthesizer synth, string desc) {
+      if (synth == null || string.IsNullOrEmpty(desc)) return false;
+      try {
+        foreach (var v in SpeechSynthesizer.AllVoices) {
+          if (VoiceMatches(v.DisplayName, desc)) {
+            synth.Voice = v;
+            return true;
+          }
+        }
+      } catch { }
+      return false;
     }
 
     private static string TrimWavSilence(string path) {
@@ -269,9 +353,10 @@ namespace GenDaLangDu {
     private static void Cancel(dynamic voice) {
       try { if (_currentPlayer != null) _currentPlayer.Stop(); } catch { }
       try { if (voice != null) voice.Speak("", 2); } catch { }
+      try { if (_rtCancel != null) _rtCancel.Cancel(); } catch { }
     }
 
-    private static void SelectVoice(dynamic voice, string desc, string lang) {
+    private static bool SelectVoice(dynamic voice, string desc, string lang) {
       bool ok = false;
       if (!string.IsNullOrEmpty(desc)) {
         try { ok = SelectOneCoreVoice(voice, desc, null); } catch { }
@@ -306,14 +391,17 @@ namespace GenDaLangDu {
         } catch { }
       }
       if (!ok) {
-        try { SelectOneCoreVoice(voice, null, lang); } catch { }
+        try { ok = SelectOneCoreVoice(voice, null, lang); } catch { }
       }
+      return ok;
     }
 
     private void ApplyVoices(string zhDesc, string enDesc) {
       Diag("AV_BEGIN");
       try { Cancel(_zh); } catch { }
       try { Cancel(_en); } catch { }
+      try { if (_rtCancel != null) _rtCancel.Cancel(); } catch { }
+      _rtCancel = new CancellationTokenSource();
       dynamic oldZh = _zh;
       dynamic oldEn = _en;
       try {
@@ -321,12 +409,16 @@ namespace GenDaLangDu {
         dynamic newZh = Activator.CreateInstance(t);
         dynamic newEn = Activator.CreateInstance(t);
         Diag("AV_SEL_ZH");
-        SelectVoice(newZh, zhDesc, "Chinese");
+        bool zhSapi = SelectVoice(newZh, zhDesc, "Chinese");
         Diag("AV_SEL_EN");
-        SelectVoice(newEn, enDesc, "English");
+        bool enSapi = SelectVoice(newEn, enDesc, "English");
         Diag("AV_SWAP");
         _zh = newZh;
         _en = newEn;
+        _zhIsRt = !zhSapi || IsNaturalName(zhDesc);
+        _enIsRt = !enSapi || IsNaturalName(enDesc);
+        if (_zhIsRt) _zhIsRt = TrySelectRtVoice(_zhRt, zhDesc);
+        if (_enIsRt) _enIsRt = TrySelectRtVoice(_enRt, enDesc);
       } catch (Exception ex) {
         Diag("AV_ERR " + ex.Message);
       }
@@ -382,13 +474,25 @@ namespace GenDaLangDu {
         dynamic tokens = v.GetVoices();
         for (int i = 0; i < tokens.Count; i++) {
           dynamic tok = tokens.Item(i);
-          list.Add(tok.GetDescription());
+          string d = tok.GetDescription();
+          if (d.IndexOf(" Online ", StringComparison.OrdinalIgnoreCase) < 0) list.Add(d);
         }
         Marshal.FinalReleaseComObject(v);
       } catch { }
       try {
         foreach (string name in OneCoreVoiceNames()) {
           if (!list.Contains(name)) list.Add(name);
+        }
+      } catch { }
+      try {
+        foreach (var v in SpeechSynthesizer.AllVoices) {
+          string dn = v.DisplayName;
+          bool legacy = dn.StartsWith("Microsoft Huihui", StringComparison.OrdinalIgnoreCase) ||
+                        dn.StartsWith("Microsoft Yaoyao", StringComparison.OrdinalIgnoreCase) ||
+                        dn.StartsWith("Microsoft Kangkang", StringComparison.OrdinalIgnoreCase) ||
+                        dn.StartsWith("Microsoft Zira", StringComparison.OrdinalIgnoreCase) ||
+                        dn.StartsWith("Microsoft David", StringComparison.OrdinalIgnoreCase);
+          if (!legacy && !list.Contains(dn)) list.Add(dn);
         }
       } catch { }
       return list;
