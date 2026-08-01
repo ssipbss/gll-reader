@@ -643,7 +643,7 @@ namespace GenDaLangDu {
           if (KeyTranslator.IsCjk(c)) {
             _composing = false;
             MarkChineseCommit();
-            if (!(TsfHook.IsActive && TextReader.IsTsfCoveredForeground())) {
+            if (!(TsfHook.IsActive && TextReader.IsTsfProcessForeground())) {
               SpeakZh(c.ToString());
               RememberSpoken(c.ToString());
             }
