@@ -888,8 +888,8 @@ namespace GenDaLangDu {
       if (!_testMode && IsOurProcessForeground()) return;
       ImeState st = _ime.GetState();
       if (!st.IsChineseMode) {
-        _lastUiText = null;
-        _lastUiElement = null;
+        /* 不再清空基线：输入法中英文切换时文档内容没变，
+           清空会导致切回中文后把旧文字当新输入重读 */
         return;
       }
       string elementId;
