@@ -27,12 +27,14 @@ namespace GenDaLangDu {
     private sealed class ReadResult {
       public string Text;
       public int Caret;
+      public bool CaretAbsolute;
     }
 
-    public static string GetFocusedText(out string elementId, out string diag, out int caret) {
+    public static string GetFocusedText(out string elementId, out string diag, out int caret, out bool caretAbs) {
       elementId = null;
       diag = null;
       caret = -1;
+      caretAbs = false;
       try {
         // TSF 钩子激活时，被 TSF 覆盖的应用（WPS/浏览器/记事本等）的中文
         // 提交由钩子直接上报；UI 线程绝不向这些应用发起 UIA/COM 调用，
@@ -45,7 +47,9 @@ namespace GenDaLangDu {
         }
         if (!TsfHook.IsActive || !IsTsfCoveredForeground()) {
           AutomationElement el = AutomationElement.FocusedElement;
-          return ReadFocused(el, out elementId, out diag, out caret);
+          string r = ReadFocused(el, out elementId, out diag, out caret);
+          if (r != null) caretAbs = _lastCaretAbsolute;
+          return r;
         }
         return null;
       } catch {
@@ -99,6 +103,7 @@ namespace GenDaLangDu {
         ReadResult rr = TryRead(el);
         if (rr != null) {
           caret = rr.Caret;
+          _lastCaretAbsolute = rr.CaretAbsolute;
           return rr.Text;
         }
         AutomationElement cur = el;
@@ -108,6 +113,7 @@ namespace GenDaLangDu {
           rr = TryRead(cur);
           if (rr != null) {
             caret = rr.Caret;
+            _lastCaretAbsolute = rr.CaretAbsolute;
             return rr.Text;
           }
         }
@@ -125,6 +131,7 @@ namespace GenDaLangDu {
             if (rr != null) {
               if (rr.Text.Length <= 1000) {
                 caret = rr.Caret;
+                _lastCaretAbsolute = rr.CaretAbsolute;
                 return rr.Text;
               }
               if (longText == null || rr.Text.Length < longText.Text.Length) longText = rr;
@@ -138,6 +145,7 @@ namespace GenDaLangDu {
         } catch { }
         if (longText != null) {
           caret = longText.Caret;
+          _lastCaretAbsolute = longText.CaretAbsolute;
           return longText.Text;
         }
         try {
@@ -148,6 +156,7 @@ namespace GenDaLangDu {
               rr = TryRead(byHwnd);
               if (rr != null) {
                 caret = rr.Caret;
+                _lastCaretAbsolute = rr.CaretAbsolute;
                 return rr.Text;
               }
             }
@@ -185,7 +194,7 @@ namespace GenDaLangDu {
           TextPatternRange range = tp.DocumentRange;
           try {
             TextPatternRange tail = range.Clone();
-            tail.MoveEndpointByUnit(TextPatternRangeEndpoint.Start, TextUnit.Character, -5000);
+            int moved = tail.MoveEndpointByUnit(TextPatternRangeEndpoint.Start, TextUnit.Character, -5000);
             string text = tail.GetText(-1);
             int caret = -1;
             try {
@@ -198,7 +207,9 @@ namespace GenDaLangDu {
                 if (caret > text.Length) caret = text.Length;
               }
             } catch { }
-            return new ReadResult { Text = text, Caret = caret };
+            /* moved > -5000 表示窗口起点被钳制在文档开头（文档不足5000字），
+               此时 caret 即绝对光标位置，可直接用新旧光标区间提取刚输入的内容 */
+            return new ReadResult { Text = text, Caret = caret, CaretAbsolute = moved > -5000 };
           } catch {
             try {
               TextPatternRange[] visible = tp.GetVisibleRanges();
@@ -213,5 +224,7 @@ namespace GenDaLangDu {
       } catch { }
       return null;
     }
+
+    private static bool _lastCaretAbsolute;
   }
 }

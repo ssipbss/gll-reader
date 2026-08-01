@@ -30,8 +30,11 @@ namespace GenDaLangDu {
     private string _lastUiText = null;
     private string _lastUiElement = null;
     private int _lastCaret = -1;
+    private int _lastCaretAbs = -1;
+    private bool _lastCaretAbsValid;
     private string _lastSpoken = "";
     private DateTime _lastPinyinKeyAt = DateTime.MinValue;
+    private DateTime _lastPasteAt = DateTime.MinValue;
     private string _lastPunctName;
     private bool _punctKeyPending;
     private DateTime _lastPunctKeyAt = DateTime.MinValue;
@@ -519,6 +522,11 @@ namespace GenDaLangDu {
         DebugLog("ALT_COMBO_IGNORED vk=0x" + e.Vk.ToString("X"));
         return;
       }
+      /* 粘贴标记：Ctrl+V / Shift+Insert，用于差异通道的因果校验 */
+      if ((e.Vk == 0x56 && CtrlDown()) || (e.Vk == 0x2D && ShiftDown())) {
+        _lastPasteAt = DateTime.Now;
+        DebugLog("PASTE_KEY vk=0x" + e.Vk.ToString("X"));
+      }
 
       ImeState ime = _ime.GetState();
       bool composing = ime.IsComposing;
@@ -731,6 +739,9 @@ namespace GenDaLangDu {
       string spk = PunctSpokenForm(FilterForSpeech(clean));
       if (string.IsNullOrEmpty(spk)) return false;
       if (!HasChineseText(clean)) return false;
+      /* 因果校验：差异结果必须能用最近的按键解释（打过五笔字母+提交），
+         粘贴（Ctrl+V/Shift+Insert）的内容与按键对不上，不朗读 */
+      if (!HasTypingSignature()) return false;
       if (!AllowPunctSpeak(clean)) return false;
       if (RecentlySpoken(spk)) return false;
       _composing = false;
@@ -739,6 +750,13 @@ namespace GenDaLangDu {
       MarkChineseCommit();
       DebugLog("UI_INSERT [" + ins + "]");
       return true;
+    }
+
+    private bool HasTypingSignature() {
+      bool typed = (DateTime.Now - _lastPinyinKeyAt).TotalMilliseconds < 2000;
+      bool pasted = _lastPasteAt > _lastPinyinKeyAt &&
+                    (DateTime.Now - _lastPasteAt).TotalMilliseconds < 2000;
+      return typed && !pasted;
     }
 
     private void OnTsfCommit(uint pid, string text) {
@@ -836,7 +854,8 @@ namespace GenDaLangDu {
       string elementId;
       string uiDiag;
       int caret;
-      string t = TextReader.GetFocusedText(out elementId, out uiDiag, out caret);
+      bool caretAbs;
+      string t = TextReader.GetFocusedText(out elementId, out uiDiag, out caret, out caretAbs);
       if (t == null) {
         if (_lastUiElement != elementId) {
           _lastUiElement = elementId;
@@ -854,9 +873,11 @@ namespace GenDaLangDu {
         _lastUiElement = elementId;
         _lastUiText = t;
         _lastCaret = caret;
+        _lastCaretAbs = caret;
+        _lastCaretAbsValid = caretAbs;
         DebugLog("UI_ELEMENT [" + (elementId ?? "") + "]");
         if (prevText != null && t != null && t.Length > prevText.Length && t.StartsWith(prevText)) {
-          string ins = ComputeInserted(prevText, t, caret);
+          string ins = ComputeInsertedSmart(prevText, t, caret, caretAbs);
           DebugLog("UI_ELEMENT_DIFF [" + ins + "]");
           if (ins.Length <= 20 && ins.Trim().Length > 0) {
             if (ins.Length > MaxUiDiffLen) {
@@ -879,6 +900,8 @@ namespace GenDaLangDu {
           int delta = t.Length - _lastUiText.Length;
           _lastUiText = t;
           _lastCaret = caret;
+          _lastCaretAbs = caret;
+          _lastCaretAbsValid = caretAbs;
           if (!string.IsNullOrEmpty(ins) && ins.Length <= 20 && ins.Trim().Length > 0) {
             DebugLog("UI_DIFF [" + ins + "] caret=" + caret + " delta=" + delta);
             if (ins.Length > MaxUiDiffLen) {
@@ -892,6 +915,8 @@ namespace GenDaLangDu {
           _composing = false;
           _lastUiText = t;
           _lastCaret = caret;
+          _lastCaretAbs = caret;
+          _lastCaretAbsValid = caretAbs;
         }
         return;
       }
@@ -899,13 +924,17 @@ namespace GenDaLangDu {
         _lastUiText = t;
         _lastUiElement = elementId;
         _lastCaret = caret;
+        _lastCaretAbs = caret;
+        _lastCaretAbsValid = caretAbs;
         return;
       }
       if (t == _lastUiText) return;
-      string inserted = ComputeInserted(_lastUiText, t, caret);
+      string inserted = ComputeInsertedSmart(_lastUiText, t, caret, caretAbs);
       int deltaLen = t.Length - _lastUiText.Length;
       _lastUiText = t;
       _lastCaret = caret;
+      _lastCaretAbs = caret;
+      _lastCaretAbsValid = caretAbs;
       if (string.IsNullOrEmpty(inserted)) return;
       DebugLog("UI_DIFF [" + inserted + "] caret=" + caret + " delta=" + deltaLen);
       if (!_chkClickSpeak.Checked && _lastMouseDownAt > _lastKeyAt) {
@@ -1090,6 +1119,29 @@ namespace GenDaLangDu {
     }
 
     /// <summary>
+    /// 智能差异：优先用“旧光标→新光标区间”直读刚输入的内容
+    /// （文档不足5000字时UIA光标即绝对位置，键盘事件仅做触发辅助），
+    /// 失败再回退窗口差异。
+    /// </summary>
+    private string ComputeInsertedSmart(string oldT, string newT, int caret, bool caretAbs) {
+      if (caretAbs && _lastCaretAbsValid && caret >= _lastCaretAbs) {
+        int delta = caret - _lastCaretAbs;
+        if (delta > 0 && delta <= 12 && _lastCaretAbs >= 0 &&
+            _lastCaretAbs <= oldT.Length && caret <= newT.Length) {
+          bool sanity = _lastCaretAbs == 0 ||
+                        (oldT[_lastCaretAbs - 1] == newT[_lastCaretAbs - 1]);
+          if (sanity) {
+            string d = newT.Substring(_lastCaretAbs, delta);
+            d = LastLine(d);
+            d = StripHeading(d);
+            return d;
+          }
+        }
+      }
+      return ComputeInserted(oldT, newT, caret);
+    }
+
+    /// <summary>
     /// 平移对齐差异：尝试窗口平移 0~12 字符后新旧窗口完全重合，
     /// 末尾多出的字符即为刚输入的内容。解决连续多字上屏只截到
     /// 末尾、以及文档变长导致窗口整体右移的误判。
@@ -1166,6 +1218,15 @@ namespace GenDaLangDu {
         if ((Native.GetAsyncKeyState(0x11) & 0x8000) != 0) return true;
         if ((Native.GetAsyncKeyState(0xA2) & 0x8000) != 0) return true;
         if ((Native.GetAsyncKeyState(0xA3) & 0x8000) != 0) return true;
+      } catch { }
+      return false;
+    }
+
+    private static bool ShiftDown() {
+      try {
+        if ((Native.GetAsyncKeyState(0x10) & 0x8000) != 0) return true;
+        if ((Native.GetAsyncKeyState(0xA0) & 0x8000) != 0) return true;
+        if ((Native.GetAsyncKeyState(0xA1) & 0x8000) != 0) return true;
       } catch { }
       return false;
     }
