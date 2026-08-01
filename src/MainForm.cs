@@ -599,9 +599,6 @@ namespace GenDaLangDu {
           }
         } else if (_chkFunc.Checked) {
           if (e.Vk >= 0x70 && e.Vk <= 0x87) _speaker.SpeakEn("F" + (e.Vk - 0x70 + 1).ToString());
-          else if (e.Vk == 0x20 && (DateTime.Now - _lastZhCommitAt).TotalMilliseconds < 500) {
-            DebugLog("SPACE_AFTER_COMMIT_SKIP");
-          }
           else if (e.Vk == 0x08 || e.Vk == 0x2E) {
             _lastDeleteAt = DateTime.Now;
             if ((DateTime.Now - _lastDeleteSpeakAt).TotalMilliseconds < 800) {
