@@ -34,6 +34,8 @@ namespace GenDaLangDu {
       diag = null;
       caret = -1;
       try {
+        string wpsText = WpsComReader.GetFocusedText(out elementId, out diag, out caret);
+        if (wpsText != null) return wpsText;
         AutomationElement el = AutomationElement.FocusedElement;
         if (el == null) return null;
         try {

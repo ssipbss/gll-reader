@@ -32,6 +32,9 @@ namespace GenDaLangDu {
     private int _lastCaret = -1;
     private string _lastSpoken = "";
     private DateTime _lastPinyinKeyAt = DateTime.MinValue;
+    private string _lastPunctName;
+    private bool _punctKeyPending;
+    private DateTime _lastPunctKeyAt = DateTime.MinValue;
     private DateTime _lastChineseCommitAt = DateTime.MinValue;
     private IntPtr _lastChineseCommitHwnd = IntPtr.Zero;
     private bool _composing;
@@ -45,6 +48,7 @@ namespace GenDaLangDu {
     private DateTime _lastElevationAskAt = DateTime.MinValue;
     private const int MaxUiDiffLen = 10;
     private bool _shiftArmed;
+    private bool _englishBeforeArm;
     private bool _shiftArmValue;
     private DateTime _shiftArmedAt = DateTime.MinValue;
     private bool _closingByTrayExit;
@@ -501,7 +505,10 @@ namespace GenDaLangDu {
       if (e.IsAutoRepeat) return;
       if (e.Vk != 0x08 && e.Vk != 0x2E) _lastDeleteSpeakAt = DateTime.MinValue;
       if (!(e.Vk >= 0x41 && e.Vk <= 0x5A) &&
-          e.Vk != 0x10 && e.Vk != 0xA0 && e.Vk != 0xA1) _shiftArmed = false;
+          e.Vk != 0x10 && e.Vk != 0xA0 && e.Vk != 0xA1) {
+        if (_shiftArmed) _imeEnglishMode = _englishBeforeArm;
+        _shiftArmed = false;
+      }
       _lastKeyAt = DateTime.Now;
       DebugLog("KEY vk=0x" + e.Vk.ToString("X") + " scan=0x" + e.Scan.ToString("X"));
       if (!IsAltKey(e.Vk) && AltDown()) {
@@ -542,6 +549,9 @@ namespace GenDaLangDu {
           return;
         } else if (_composing && IsCandidateControl(e.Vk)) {
           _lastPinyinKeyAt = DateTime.Now;
+          _lastPunctName = null;
+          _punctKeyPending = true;
+          _lastPunctKeyAt = DateTime.Now;
           CheckUiText();
           if (_composing) {
             MarkChineseCommit();
@@ -567,6 +577,7 @@ namespace GenDaLangDu {
             } else {
               _shiftArmed = true;
               _shiftArmValue = !_imeEnglishMode;
+              _englishBeforeArm = _imeEnglishMode;
               _shiftArmedAt = DateTime.Now;
               DebugLog("SHIFT_ARM value=" + _shiftArmValue + " english=" + _imeEnglishMode);
             }
@@ -634,6 +645,9 @@ namespace GenDaLangDu {
           if (pn != null) {
             if (chineseMode) {
               _composing = false;
+              _lastPunctName = pn;
+              _punctKeyPending = true;
+              _lastPunctKeyAt = DateTime.Now;
             } else if (_chkPunct.Checked) {
               SpeakZh(pn);
               RememberSpoken(pn);
@@ -691,6 +705,50 @@ namespace GenDaLangDu {
       _lastSpokenAt = DateTime.Now;
     }
 
+    private bool TrySpeakInserted(string ins) {
+      if (string.IsNullOrEmpty(ins)) return false;
+      string clean = StripCompositionLetters(ins);
+      if (clean.Length == 0) return false;
+      string spk = PunctSpokenForm(FilterForSpeech(clean));
+      if (string.IsNullOrEmpty(spk)) return false;
+      if (!HasChineseText(clean)) return false;
+      if (!AllowPunctSpeak(clean)) return false;
+      if (RecentlySpoken(spk)) return false;
+      _composing = false;
+      SpeakZh(spk);
+      RememberSpoken(spk);
+      MarkChineseCommit();
+      DebugLog("UI_INSERT [" + ins + "]");
+      return true;
+    }
+
+    private static string StripCompositionLetters(string s) {
+      if (string.IsNullOrEmpty(s)) return s;
+      bool hasCjk = false;
+      foreach (char c in s) {
+        if (KeyTranslator.IsCjk(c)) { hasCjk = true; break; }
+      }
+      if (!hasCjk) return s;
+      System.Text.StringBuilder sb = new System.Text.StringBuilder();
+      foreach (char c in s) {
+        if (KeyTranslator.IsLatinLetter(c)) continue;
+        sb.Append(c);
+      }
+      return sb.ToString();
+    }
+
+    private bool AllowPunctSpeak(string clean) {
+      if (clean.Length > 1) return true;
+      string pn = KeyTranslator.PunctName(clean[0]);
+      if (pn == null) return true;
+      if (!_punctKeyPending) return false;
+      if ((DateTime.Now - _lastPunctKeyAt).TotalMilliseconds > 3000) return false;
+      if (_lastPunctName != null && _lastPunctName != pn) return false;
+      _punctKeyPending = false;
+      _lastPunctName = null;
+      return true;
+    }
+
     private void CheckUiText() {
       if (!_listening) return;
       if (!_testMode && IsOurProcessForeground()) return;
@@ -734,14 +792,7 @@ namespace GenDaLangDu {
                 DebugLog("UI_CLICK_IGNORED [" + ins + "]");
                 return;
               }
-              string spk = PunctSpokenForm(FilterForSpeech(ins));
-              if (!string.IsNullOrEmpty(spk) && HasChineseText(ins) && !RecentlySpoken(spk)) {
-                _composing = false;
-                SpeakZh(spk);
-                RememberSpoken(spk);
-                MarkChineseCommit();
-                DebugLog("UI_INSERT [" + ins + "]");
-              }
+              TrySpeakInserted(ins);
             }
           }
         }
@@ -758,15 +809,7 @@ namespace GenDaLangDu {
             if (ins.Length > MaxUiDiffLen) {
               DebugLog("UI_DIFF_SKIP_LONG [" + ins + "]");
             } else {
-              string spk = PunctSpokenForm(FilterForSpeech(ins));
-              if (!string.IsNullOrEmpty(spk) && HasChineseText(ins) && !RecentlySpoken(spk)) {
-                _composing = false;
-                SpeakZh(spk);
-                RememberSpoken(spk);
-                MarkChineseCommit();
-                DebugLog("UI_INSERT [" + ins + "]");
-                return;
-              }
+              if (TrySpeakInserted(ins)) return;
             }
           }
         }
@@ -801,14 +844,7 @@ namespace GenDaLangDu {
         DebugLog("UI_DIFF_SKIP_LONG [" + inserted + "]");
         return;
       }
-      string speakText = PunctSpokenForm(FilterForSpeech(inserted));
-      if (string.IsNullOrEmpty(speakText)) return;
-      if (!HasChineseText(inserted)) return;
-      if (RecentlySpoken(speakText)) return;
-      SpeakZh(speakText);
-      RememberSpoken(speakText);
-      MarkChineseCommit();
-      DebugLog("UI_INSERT [" + inserted + "]");
+      TrySpeakInserted(inserted);
     }
 
     private static bool HasChineseText(string s) {
@@ -939,7 +975,15 @@ namespace GenDaLangDu {
       int maxP = Math.Min(caret, oldCaret);
       int p = 0;
       while (p < maxP && newT[p] == oldT[p]) p++;
-      int len = caret - p;
+      // 从末尾对齐共同后缀，防止输入法上屏瞬间 WPS 光标滞后导致把光标后的旧文字算进新内容
+      int sOld = oldT.Length - 1;
+      int sNew = newT.Length - 1;
+      while (sOld >= p && sNew >= p && oldT[sOld] == newT[sNew]) {
+        sOld--;
+        sNew--;
+      }
+      int end = Math.Min(caret, sNew + 1);
+      int len = end - p;
       if (len <= 0 || len > 12) return false;
       diff = newT.Substring(p, len);
       return true;
