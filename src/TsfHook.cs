@@ -98,7 +98,9 @@ namespace GenDaLangDu {
           return;
         }
         _commitMsg = RegisterWindowMessageW("GLL_TSF_COMMIT");
-        string dll = FindDll("gll_tsf_hook64_v11.dll");
+        string dll = FindDll("gll_tsf_hook64_v13.dll");
+        if (dll == null) dll = FindDll("gll_tsf_hook64_v12.dll");
+        if (dll == null) dll = FindDll("gll_tsf_hook64_v11.dll");
         if (dll == null) dll = FindDll("gll_tsf_hook64_v10.dll");
         if (dll == null) dll = FindDll("gll_tsf_hook64_v9.dll");
         if (dll == null) dll = FindDll("gll_tsf_hook64_v8.dll");

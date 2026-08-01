@@ -55,6 +55,7 @@ BOOL __stdcall ImmReleaseContext(HWND hWnd, HIMC hIMC);
 int  __stdcall ImmGetCompositionStringW(HIMC hIMC, DWORD dwIndex, void *lpBuf, DWORD dwBufLen);
 int  __stdcall ImmGetCompositionStringA(HIMC hIMC, DWORD dwIndex, void *lpBuf, DWORD dwBufLen);
 BOOL __stdcall ImmGetOpenStatus(HIMC hIMC);
+BOOL __stdcall ImmGetConversionStatus(HIMC hIMC, DWORD *lpConversion, DWORD *lpSentence);
 
 
 /* ---------------- GUID ---------------- */
@@ -100,6 +101,7 @@ typedef struct ITfReadOnlyPropertyVtbl {
   HRESULT (STDMETHODCALLTYPE *EnumRanges)(void*, DWORD, ITfRange*, void**);
   HRESULT (STDMETHODCALLTYPE *GetContext)(void*, void**);
 } ITfReadOnlyPropertyVtbl;
+
 
 /* ---------------- 接口声明 ---------------- */
 typedef struct ITfThreadMgr ITfThreadMgr;

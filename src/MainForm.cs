@@ -37,8 +37,6 @@ namespace GenDaLangDu {
     private DateTime _lastPunctKeyAt = DateTime.MinValue;
     private readonly System.Collections.Generic.List<RecentChar> _recentChars =
       new System.Collections.Generic.List<RecentChar>();
-    private readonly System.Text.StringBuilder _pendingLetters = new System.Text.StringBuilder();
-    private System.Windows.Forms.Timer _letterTimer;
     private DateTime _lastChineseCommitAt = DateTime.MinValue;
     private IntPtr _lastChineseCommitHwnd = IntPtr.Zero;
     private bool _composing;
@@ -629,27 +627,9 @@ namespace GenDaLangDu {
               }
               _shiftArmed = false;
             }
-            if (ShiftOrCaps() || _imeEnglishMode) {
-              if (_chkLetters.Checked) {
-                char lc = char.ToLowerInvariant(KeyTranslator.NormalizeLatin(c));
-                _speaker.SpeakEn(lc.ToString());
-                RememberRecentChar(lc);
-              }
-            } else if (chineseMode || _composing) {
+            if ((chineseMode || _composing) && !ShiftOrCaps() && !_imeEnglishMode) {
               _composing = true;
               _lastPinyinKeyAt = DateTime.Now;
-              /* 缓冲字母：若随后有中文提交则说明是五笔码（取消），
-                 没有则说明已直接上屏（朗读） */
-              _pendingLetters.Append(char.ToLowerInvariant(KeyTranslator.NormalizeLatin(c)));
-              if (_letterTimer == null) {
-                _letterTimer = new System.Windows.Forms.Timer();
-                _letterTimer.Interval = 600;
-                _letterTimer.Tick += delegate { FlushPendingLetters(); };
-              } else {
-                _letterTimer.Interval = 600;
-              }
-              _letterTimer.Stop();
-              _letterTimer.Start();
             } else if (_chkLetters.Checked) {
               char lc = char.ToLowerInvariant(KeyTranslator.NormalizeLatin(c));
               _speaker.SpeakEn(lc.ToString());
@@ -658,14 +638,6 @@ namespace GenDaLangDu {
             continue;
           }
           if (c == ' ') {
-            if (_pendingLetters.Length > 0) {
-              /* 空格可能触发五笔上屏：延长缓冲，等提交判定（取消或朗读） */
-              if (_letterTimer != null) {
-                _letterTimer.Interval = 1200;
-                _letterTimer.Stop();
-                _letterTimer.Start();
-              }
-            }
             if (!_composing && _chkFunc.Checked) SpeakZh("空格");
             continue;
           }
@@ -679,7 +651,6 @@ namespace GenDaLangDu {
           if (KeyTranslator.IsCjk(c)) {
             _composing = false;
             MarkChineseCommit();
-            CancelPendingLetters();
             SpeakZh(c.ToString());
             RememberSpoken(c.ToString());
             RememberRecentChar(c);
@@ -758,27 +729,6 @@ namespace GenDaLangDu {
       } catch { }
     }
 
-    private void FlushPendingLetters() {
-      if (_pendingLetters.Length == 0) return;
-      string text = _pendingLetters.ToString();
-      _pendingLetters.Clear();
-      _composing = false;
-      if (_chkLetters.Checked) {
-        foreach (char c in text) {
-          _speaker.SpeakEn(c.ToString());
-          RememberRecentChar(c);
-        }
-        DebugLog("LETTERS_FLUSH [" + text + "]");
-      }
-    }
-
-    private void CancelPendingLetters() {
-      try {
-        _pendingLetters.Clear();
-        if (_letterTimer != null) _letterTimer.Stop();
-      } catch { }
-    }
-
     /// <summary>提交文本的每个汉字是否都在最近1.5秒内被按键通道单独读过（避免双读）。</summary>
     private bool AllCharsSpokenRecently(string text) {
       if (string.IsNullOrEmpty(text)) return false;
@@ -810,7 +760,6 @@ namespace GenDaLangDu {
       if (AllCharsSpokenRecently(clean)) return false;
       if (!AllowPunctSpeak(clean)) return false;
       if (RecentlySpoken(spk)) return false;
-      CancelPendingLetters();
       _composing = false;
       SpeakZh(spk);
       RememberSpoken(spk);
@@ -828,7 +777,6 @@ namespace GenDaLangDu {
         if (AllCharsSpokenRecently(text)) return;
         bool hasCjk = HasChineseText(text);
         if (hasCjk) {
-          CancelPendingLetters();
           string spk = PunctSpokenForm(FilterForSpeech(text));
           if (string.IsNullOrEmpty(spk)) return;
           if (RecentlySpoken(spk)) return;
