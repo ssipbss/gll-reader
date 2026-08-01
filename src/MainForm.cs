@@ -651,11 +651,11 @@ namespace GenDaLangDu {
           if (KeyTranslator.IsCjk(c)) {
             _composing = false;
             MarkChineseCommit();
-            RememberRecentChar(c);
             string cs = c.ToString();
-            if (!RecentlySpoken(cs)) {
+            if (!IsCharSpokenRecently(c)) {
               SpeakZh(cs);
               RememberSpoken(cs);
+              RememberRecentChar(c);
             }
             continue;
           }
@@ -752,6 +752,23 @@ namespace GenDaLangDu {
       return true;
     }
 
+    private bool IsCharSpokenRecently(char c) {
+      char key = KeyTranslator.IsLatinLetter(c) ? char.ToLowerInvariant(KeyTranslator.NormalizeLatin(c)) : c;
+      DateTime now = DateTime.Now;
+      for (int i = _recentChars.Count - 1; i >= 0; i--) {
+        if (_recentChars[i].Char == key && (now - _recentChars[i].At).TotalMilliseconds < 1500) return true;
+      }
+      return false;
+    }
+
+    private void RememberCharsOf(string text) {
+      if (string.IsNullOrEmpty(text)) return;
+      foreach (char c in text) {
+        if (KeyTranslator.IsCjk(c) || (c >= 0x3000 && c <= 0x9FFF) ||
+            (c >= 0xFF00 && c <= 0xFFEF)) RememberRecentChar(c);
+      }
+    }
+
     private bool TrySpeakInserted(string ins) {
       if (string.IsNullOrEmpty(ins)) return false;
       if ((DateTime.Now - _lastTsfCommitAt).TotalMilliseconds < 600) return false;
@@ -766,6 +783,7 @@ namespace GenDaLangDu {
       _composing = false;
       SpeakZh(spk);
       RememberSpoken(spk);
+      RememberCharsOf(clean);
       MarkChineseCommit();
       DebugLog("UI_INSERT [" + ins + "]");
       return true;
@@ -786,6 +804,7 @@ namespace GenDaLangDu {
           _composing = false;
           SpeakZh(spk);
           RememberSpoken(spk);
+          RememberCharsOf(text);
           MarkChineseCommit();
           _lastTsfCommitAt = DateTime.Now;
           DebugLog("TSF_COMMIT [" + text + "]");
