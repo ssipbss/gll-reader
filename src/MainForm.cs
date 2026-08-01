@@ -643,8 +643,10 @@ namespace GenDaLangDu {
               _pendingLetters.Append(char.ToLowerInvariant(KeyTranslator.NormalizeLatin(c)));
               if (_letterTimer == null) {
                 _letterTimer = new System.Windows.Forms.Timer();
-                _letterTimer.Interval = 500;
+                _letterTimer.Interval = 600;
                 _letterTimer.Tick += delegate { FlushPendingLetters(); };
+              } else {
+                _letterTimer.Interval = 600;
               }
               _letterTimer.Stop();
               _letterTimer.Start();
@@ -656,6 +658,14 @@ namespace GenDaLangDu {
             continue;
           }
           if (c == ' ') {
+            if (_pendingLetters.Length > 0) {
+              /* 空格可能触发五笔上屏：延长缓冲，等提交判定（取消或朗读） */
+              if (_letterTimer != null) {
+                _letterTimer.Interval = 1200;
+                _letterTimer.Stop();
+                _letterTimer.Start();
+              }
+            }
             if (!_composing && _chkFunc.Checked) SpeakZh("空格");
             continue;
           }
