@@ -665,6 +665,7 @@ namespace GenDaLangDu {
           !(c >= 0xFF10 && c <= 0xFF19) &&
           !(c >= 0xFF21 && c <= 0xFF3A) &&
           !(c >= 0xFF41 && c <= 0xFF5A);
+        if (c == '\'' || c == '"') continue;
         if (KeyTranslator.IsCjk(c) || (c >= 0x3000 && c <= 0x9FFF) ||
             fullWidth || KeyTranslator.PunctName(c) != null) {
           sb.Append(c);
