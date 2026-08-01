@@ -8,8 +8,19 @@ namespace GenDaLangDu {
       bool createdNew;
       using (System.Threading.Mutex mutex = new System.Threading.Mutex(true, "GenDaLangDu_SingleInstance", out createdNew)) {
         if (!createdNew && !IsTestMode(args)) {
-          MessageBox.Show("归零归零已经在运行了。", "归零归零");
-          return;
+          bool got = false;
+          try {
+            for (int i = 0; i < 30; i++) {
+              if (mutex.WaitOne(100)) {
+                got = true;
+                break;
+              }
+            }
+          } catch { }
+          if (!got) {
+            MessageBox.Show("归零归零已经在运行了。", "归零归零");
+            return;
+          }
         }
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
