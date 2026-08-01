@@ -620,7 +620,7 @@ namespace GenDaLangDu {
         foreach (char c in chars) {
           if (KeyTranslator.IsLatinLetter(c)) {
             if (_shiftArmed) {
-              if ((DateTime.Now - _shiftArmedAt).TotalMilliseconds < 1500) {
+              if ((DateTime.Now - _shiftArmedAt).TotalMilliseconds < 3000) {
                 _imeEnglishMode = _shiftArmValue;
                 if (_imeEnglishMode) _composing = false;
                 DebugLog("SHIFT_APPLY english=" + _imeEnglishMode);
@@ -631,7 +631,9 @@ namespace GenDaLangDu {
               _composing = true;
               _lastPinyinKeyAt = DateTime.Now;
             } else if (_chkLetters.Checked) {
-              _speaker.SpeakEn(KeyTranslator.NormalizeLatin(c).ToString().ToLowerInvariant());
+              char lc = char.ToLowerInvariant(KeyTranslator.NormalizeLatin(c));
+              _speaker.SpeakEn(lc.ToString());
+              RememberRecentChar(lc);
             }
             continue;
           }
@@ -640,7 +642,10 @@ namespace GenDaLangDu {
             continue;
           }
           if (char.IsDigit(c) || (c >= '０' && c <= '９')) {
-            if (!_composing && _chkDigits.Checked) SpeakZh(KeyTranslator.DigitToChinese(c));
+            if (!_composing && _chkDigits.Checked) {
+              SpeakZh(KeyTranslator.DigitToChinese(c));
+              RememberRecentChar(c >= '０' && c <= '９' ? (char)(c - 0xFF10 + '0') : c);
+            }
             continue;
           }
           if (KeyTranslator.IsCjk(c)) {
@@ -729,10 +734,12 @@ namespace GenDaLangDu {
       if (string.IsNullOrEmpty(text)) return false;
       DateTime now = DateTime.Now;
       foreach (char c in text) {
-        if (!KeyTranslator.IsCjk(c)) continue;
+        char key = KeyTranslator.IsLatinLetter(c) ? char.ToLowerInvariant(KeyTranslator.NormalizeLatin(c)) : c;
+        if (!KeyTranslator.IsCjk(c) && !KeyTranslator.IsLatinLetter(c) &&
+            !char.IsDigit(c) && !(c >= '０' && c <= '９')) continue;
         bool found = false;
         for (int i = _recentChars.Count - 1; i >= 0; i--) {
-          if (_recentChars[i].Char == c && (now - _recentChars[i].At).TotalMilliseconds < 1500) {
+          if (_recentChars[i].Char == key && (now - _recentChars[i].At).TotalMilliseconds < 1500) {
             found = true;
             break;
           }
@@ -767,17 +774,38 @@ namespace GenDaLangDu {
         if (string.IsNullOrEmpty(text)) return;
         if (IsOurProcessForeground()) return;
         if (!IsCommitFromForeground(pid)) return;
-        if (!HasChineseText(text)) return;
         if (AllCharsSpokenRecently(text)) return;
-        string spk = PunctSpokenForm(FilterForSpeech(text));
-        if (string.IsNullOrEmpty(spk)) return;
-        if (RecentlySpoken(spk)) return;
-        _composing = false;
-        SpeakZh(spk);
-        RememberSpoken(spk);
-        MarkChineseCommit();
-        _lastTsfCommitAt = DateTime.Now;
-        DebugLog("TSF_COMMIT [" + text + "]");
+        bool hasCjk = HasChineseText(text);
+        if (hasCjk) {
+          string spk = PunctSpokenForm(FilterForSpeech(text));
+          if (string.IsNullOrEmpty(spk)) return;
+          if (RecentlySpoken(spk)) return;
+          _composing = false;
+          SpeakZh(spk);
+          RememberSpoken(spk);
+          MarkChineseCommit();
+          _lastTsfCommitAt = DateTime.Now;
+          DebugLog("TSF_COMMIT [" + text + "]");
+          return;
+        }
+        /* 已上屏的英文/数字（Shift 或大写锁定切英文后直接上屏） */
+        foreach (char c in text) {
+          if (KeyTranslator.IsLatinLetter(c)) {
+            if (_chkLetters.Checked) {
+              _speaker.SpeakEn(KeyTranslator.NormalizeLatin(c).ToString().ToLowerInvariant());
+              RememberRecentChar(char.ToLowerInvariant(KeyTranslator.NormalizeLatin(c)));
+            }
+          } else if (char.IsDigit(c) || (c >= '０' && c <= '９')) {
+            if (_chkDigits.Checked) {
+              SpeakZh(KeyTranslator.DigitToChinese(c));
+              RememberRecentChar(c >= '０' && c <= '９' ? (char)(c - 0xFF10 + '0') : c);
+            }
+          }
+        }
+        if (text.Length > 0) {
+          _lastTsfCommitAt = DateTime.Now;
+          DebugLog("TSF_LETTERS [" + text + "]");
+        }
       } catch { }
     }
 
