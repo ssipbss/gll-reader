@@ -48,6 +48,7 @@ namespace GenDaLangDu {
     private DateTime _lastKeyAt = DateTime.MinValue;
     private DateTime _lastSpokenAt = DateTime.MinValue;
     private DateTime _lastDeleteSpeakAt = DateTime.MinValue;
+    private DateTime _lastDeleteAt = DateTime.MinValue;
     private DateTime _lastZhCommitAt = DateTime.MinValue;
     private DateTime _lastTsfCommitAt = DateTime.MinValue;
     private DateTime _lastPacketCjkAt = DateTime.MinValue;
@@ -601,12 +602,14 @@ namespace GenDaLangDu {
           else if (e.Vk == 0x20 && (DateTime.Now - _lastZhCommitAt).TotalMilliseconds < 500) {
             DebugLog("SPACE_AFTER_COMMIT_SKIP");
           }
-          else if ((e.Vk == 0x08 || e.Vk == 0x2E) &&
-                   (DateTime.Now - _lastDeleteSpeakAt).TotalMilliseconds < 800) {
+          else if (e.Vk == 0x08 || e.Vk == 0x2E) {
+            _lastDeleteAt = DateTime.Now;
+            if ((DateTime.Now - _lastDeleteSpeakAt).TotalMilliseconds < 800) {
             DebugLog("DELETE_COALESCE vk=0x" + e.Vk.ToString("X"));
-          } else {
-            if (e.Vk == 0x08 || e.Vk == 0x2E) _lastDeleteSpeakAt = DateTime.Now;
-            SpeakZh(keyName);
+            } else {
+              _lastDeleteSpeakAt = DateTime.Now;
+              SpeakZh(keyName);
+            }
           }
         }
         ScheduleImeCheck();
@@ -728,6 +731,8 @@ namespace GenDaLangDu {
 
     private bool TrySpeakInserted(string ins) {
       if (string.IsNullOrEmpty(ins)) return false;
+      /* 退格/删除后1秒内差异不朗读：删除不会产生新增，误读的'插入'不可信 */
+      if ((DateTime.Now - _lastDeleteAt).TotalMilliseconds < 1000) return false;
       /* 按键通道刚读到汉字提交（VK_PACKET）时，差异通道让路，避免双读 */
       if ((DateTime.Now - _lastPacketCjkAt).TotalMilliseconds < 2000) return false;
       if ((DateTime.Now - _lastTsfCommitAt).TotalMilliseconds < 600) return false;
