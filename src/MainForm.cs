@@ -658,6 +658,8 @@ namespace GenDaLangDu {
               _lastPunctName = pn;
               _punctKeyPending = true;
               _lastPunctKeyAt = DateTime.Now;
+              SpeakZh(pn);
+              RememberSpoken(pn);
             } else if (_chkPunct.Checked) {
               SpeakZh(pn);
               RememberSpoken(pn);
