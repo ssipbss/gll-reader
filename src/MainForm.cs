@@ -102,7 +102,17 @@ namespace GenDaLangDu {
 
       _hbTimer = new System.Windows.Forms.Timer();
       _hbTimer.Interval = 30000;
-      _hbTimer.Tick += delegate { DebugLog("HB"); };
+      _hbTimer.Tick += delegate {
+        DebugLog("HB");
+        if (_listening && (!_hook.IsInstalled || !_hook.IsHookThreadAlive)) {
+          DebugLog("HOOK_RESTART");
+          try { _hook.Install(); } catch { }
+          if (!_hook.IsInstalled) {
+            _listening = false;
+            UpdateUi();
+          }
+        }
+      };
 
       if (_testMode) {
         ShowInTaskbar = false;

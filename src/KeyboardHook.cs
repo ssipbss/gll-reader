@@ -29,6 +29,10 @@ namespace GenDaLangDu {
       get { return _installed; }
     }
 
+    public bool IsHookThreadAlive {
+      get { return _thread != null && _thread.IsAlive; }
+    }
+
     public void Install() {
       if (_thread != null && _thread.IsAlive) return;
       _stopping = false;
