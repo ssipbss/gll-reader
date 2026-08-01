@@ -16,6 +16,31 @@ namespace GenDaLangDu {
         if (elementId == null) {
           elementId = (el.Current.ClassName ?? "") + "|" + (el.Current.Name ?? "");
         }
+        string t = TryReadText(el);
+        if (t != null) return t;
+        AutomationElement cur = el;
+        for (int i = 0; i < 12; i++) {
+          try { cur = TreeWalker.ControlViewWalker.GetParent(cur); } catch { break; }
+          if (cur == null) break;
+          t = TryReadText(cur);
+          if (t != null) return t;
+        }
+        try {
+          AutomationElementCollection kids = el.FindAll(TreeScope.Children, Condition.TrueCondition);
+          for (int i = 0; i < kids.Count && i < 12; i++) {
+            t = TryReadText(kids[i]);
+            if (t != null) return t;
+          }
+        } catch { }
+        return null;
+      } catch {
+        return null;
+      }
+    }
+
+    private static string TryReadText(AutomationElement el) {
+      if (el == null) return null;
+      try {
         object pattern;
         if (el.TryGetCurrentPattern(ValuePattern.Pattern, out pattern)) {
           string v = ((ValuePattern)pattern).Current.Value;
@@ -32,10 +57,8 @@ namespace GenDaLangDu {
             return range.GetText(20000);
           }
         }
-        return null;
-      } catch {
-        return null;
-      }
+      } catch { }
+      return null;
     }
   }
 }

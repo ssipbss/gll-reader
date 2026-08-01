@@ -32,8 +32,12 @@ namespace GenDaLangDu {
         st.Hkl = Native.GetKeyboardLayout(tid).ToInt64();
         st.IsChineseLayout = IsChineseLayoutHkl(tid);
 
+        uint curTid = Native.GetCurrentThreadId();
+        bool attached = false;
+        try { attached = Native.AttachThreadInput(curTid, tid, true); } catch { }
         IntPtr imc = Native.ImmGetContext(hwnd);
         if (imc == IntPtr.Zero) {
+          if (attached) { try { Native.AttachThreadInput(curTid, tid, false); } catch { } }
           st.IsChineseMode = st.IsChineseLayout;
           return st;
         }
@@ -50,6 +54,7 @@ namespace GenDaLangDu {
           st.IsComposing = st.Composition.Length > 0;
         } finally {
           Native.ImmReleaseContext(hwnd, imc);
+          if (attached) { try { Native.AttachThreadInput(curTid, tid, false); } catch { } }
         }
 
         st.IsChineseMode = st.IsComposing;

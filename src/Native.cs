@@ -84,6 +84,12 @@ namespace GenDaLangDu {
     [DllImport("user32.dll")]
     public static extern short GetAsyncKeyState(int vKey);
 
+    [DllImport("user32.dll")]
+    public static extern short GetKeyState(int nVirtKey);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
     [DllImport("imm32.dll")]
     public static extern IntPtr ImmGetContext(IntPtr hWnd);
 

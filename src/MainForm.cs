@@ -37,6 +37,10 @@ namespace GenDaLangDu {
     private DateTime _lastKeyAt = DateTime.MinValue;
     private DateTime _lastSpokenAt = DateTime.MinValue;
     private DateTime _lastDeleteSpeakAt = DateTime.MinValue;
+    private DateTime _lastZhCommitAt = DateTime.MinValue;
+    private bool _shiftArmed;
+    private bool _shiftArmValue;
+    private DateTime _shiftArmedAt = DateTime.MinValue;
     private bool _closingByTrayExit;
     private bool _loading;
     private bool _forceDebug;
@@ -468,6 +472,8 @@ namespace GenDaLangDu {
       if (e.IsUp) return;
       if (e.IsAutoRepeat) return;
       if (e.Vk != 0x08 && e.Vk != 0x2E) _lastDeleteSpeakAt = DateTime.MinValue;
+      if (!(e.Vk >= 0x41 && e.Vk <= 0x5A) &&
+          e.Vk != 0x10 && e.Vk != 0xA0 && e.Vk != 0xA1) _shiftArmed = false;
       _lastKeyAt = DateTime.Now;
       DebugLog("KEY vk=0x" + e.Vk.ToString("X") + " scan=0x" + e.Scan.ToString("X"));
       if (!IsAltKey(e.Vk) && AltDown()) {
@@ -507,6 +513,7 @@ namespace GenDaLangDu {
           ScheduleImeCheck();
           return;
         } else if (_composing && IsCandidateControl(e.Vk)) {
+          _lastPinyinKeyAt = DateTime.Now;
           CheckUiText();
           if (_composing) {
             MarkChineseCommit();
@@ -523,19 +530,24 @@ namespace GenDaLangDu {
       if (keyName != null) {
         if (IsModifierKey(e.Vk)) {
           if (_chkModifiers.Checked && !chineseMode) SpeakZh(keyName);
+          if (_composing) _lastPinyinKeyAt = DateTime.Now;
           if (e.Vk == 0x10 || e.Vk == 0xA0 || e.Vk == 0xA1) {
             bool ctrl = CtrlDown();
             bool alt = AltDown();
             if (ctrl || alt) {
               DebugLog("SHIFT_TOGGLE_IGNORED ctrl=" + ctrl + " alt=" + alt);
             } else {
-              _imeEnglishMode = !_imeEnglishMode;
-              if (_imeEnglishMode) _composing = false;
-              DebugLog("SHIFT_TOGGLE english=" + _imeEnglishMode + " chinese=" + chineseMode);
+              _shiftArmed = true;
+              _shiftArmValue = !_imeEnglishMode;
+              _shiftArmedAt = DateTime.Now;
+              DebugLog("SHIFT_ARM value=" + _shiftArmValue + " english=" + _imeEnglishMode);
             }
           }
         } else if (_chkFunc.Checked) {
           if (e.Vk >= 0x70 && e.Vk <= 0x87) _speaker.SpeakEn("F" + (e.Vk - 0x70 + 1).ToString());
+          else if (e.Vk == 0x20 && (DateTime.Now - _lastZhCommitAt).TotalMilliseconds < 500) {
+            DebugLog("SPACE_AFTER_COMMIT_SKIP");
+          }
           else if ((e.Vk == 0x08 || e.Vk == 0x2E) &&
                    (DateTime.Now - _lastDeleteSpeakAt).TotalMilliseconds < 800) {
             DebugLog("DELETE_COALESCE vk=0x" + e.Vk.ToString("X"));
@@ -559,6 +571,14 @@ namespace GenDaLangDu {
       if (!string.IsNullOrEmpty(chars)) {
         foreach (char c in chars) {
           if (KeyTranslator.IsLatinLetter(c)) {
+            if (_shiftArmed) {
+              if ((DateTime.Now - _shiftArmedAt).TotalMilliseconds < 1500) {
+                _imeEnglishMode = _shiftArmValue;
+                if (_imeEnglishMode) _composing = false;
+                DebugLog("SHIFT_APPLY english=" + _imeEnglishMode);
+              }
+              _shiftArmed = false;
+            }
             if ((chineseMode || _composing) && !ShiftOrCaps() && !_imeEnglishMode) {
               _composing = true;
               _lastPinyinKeyAt = DateTime.Now;
@@ -805,12 +825,13 @@ namespace GenDaLangDu {
     private void MarkChineseCommit() {
       _imeEnglishMode = false;
       _lastChineseCommitAt = DateTime.Now;
+      _lastZhCommitAt = DateTime.Now;
     }
 
     private static bool ShiftOrCaps() {
       try {
         if ((Native.GetAsyncKeyState(0x10) & 0x8000) != 0) return true;
-        if ((Native.GetAsyncKeyState(0x14) & 1) != 0) return true;
+        if ((Native.GetKeyState(0x14) & 1) != 0) return true;
       } catch { }
       return false;
     }
