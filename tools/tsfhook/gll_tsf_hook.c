@@ -385,6 +385,7 @@ static BOOL IsAllowedProcess(void) {
 
 static void SendCommit(const WCHAR *text, int len) {
   if (len <= 0 || len >= GLL_MAX_TEXT) return;
+  if (!HasCjk(text, len)) return;
   /* 同一文本在 400ms 内只发一次（TSF/IMM 双通道可能重复） */
   if (wcsncmp(g_lastSent, text, len) == 0 && g_lastSent[len] == 0 &&
       (GetTickCount() - g_lastSentTick) < 400) return;
@@ -424,23 +425,6 @@ static void SendCommit(const WCHAR *text, int len) {
     return;
   }
   Dbg(L"SendCommit OK text=[%s] atom=%u", text, atom);
-}
-
-/* 判断改动范围是否属于输入法正在进行的组字（区分五笔码与已上屏英文） */
-static BOOL RangeIsComposing(ITfContext *pic, DWORD ec, ITfRange *range) {
-  void *prop = NULL;
-  if (FAILED(pic->lpVtbl->GetProperty(pic, &GUID_PROP_COMPOSING, &prop)) || !prop) return FALSE;
-  ITfReadOnlyPropertyVtbl *v = (ITfReadOnlyPropertyVtbl*)(*(void**)prop);
-  VARIANT var;
-  memset(&var, 0, sizeof(var));
-  BOOL comp = FALSE;
-  if (SUCCEEDED(v->GetValue(prop, ec, range, &var)) && var.vt == VT_BOOL) {
-    short b;
-    memcpy(&b, var.payload, 2);
-    if (b != 0) comp = TRUE;
-  }
-  v->Release(prop);
-  return comp;
 }
 
 /* 进程内读取 IMM 输入法的上屏结果（读霸同款思路，适用于不走 TSF 文档的应用） */
@@ -663,10 +647,8 @@ static HRESULT STDMETHODCALLTYPE Edit_OnEndEdit(GllSink *self, ITfContext *pic,
     if (SUCCEEDED(hr) && len > 0) {
       buf[len] = 0;
       count++;
-      BOOL hasCjk = HasCjk(buf, (int)len);
-      BOOL composing = hasCjk ? FALSE : RangeIsComposing(pic, ecReadOnly, range);
       Dbg(L"OnEndEdit [%s] len=%lu", buf, len);
-      if (hasCjk || !composing) SendCommit(buf, (int)len);
+      SendCommit(buf, (int)len);
     }
     range->lpVtbl->Release(range);
   }
@@ -707,7 +689,7 @@ static LRESULT CALLBACK HookProc(int nCode, WPARAM wParam, LPARAM lParam) {
           msg->message == 0x0102 ||                              /* WM_CHAR */
           msg->message == 0x0006 || msg->message == 0x0007)) {   /* WM_ACTIVATE/SETFOCUS */
         st->retryCount++;
-        if (st->retryCount % 2 == 0) {
+        if (st->retryCount % 4 == 0) {
           TryAdoptFocus(st);
         }
       }
