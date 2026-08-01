@@ -35,8 +35,6 @@ namespace GenDaLangDu {
     private string _lastPunctName;
     private bool _punctKeyPending;
     private DateTime _lastPunctKeyAt = DateTime.MinValue;
-    private readonly System.Collections.Generic.List<RecentChar> _recentChars =
-      new System.Collections.Generic.List<RecentChar>();
     private DateTime _lastChineseCommitAt = DateTime.MinValue;
     private IntPtr _lastChineseCommitHwnd = IntPtr.Zero;
     private bool _composing;
@@ -51,10 +49,6 @@ namespace GenDaLangDu {
     private DateTime _lastElevationAskAt = DateTime.MinValue;
     private const int MaxUiDiffLen = 10;
 
-    private struct RecentChar {
-      public char Char;
-      public DateTime At;
-    }
     private bool _shiftArmed;
     private bool _englishBeforeArm;
     private bool _shiftArmValue;
@@ -633,7 +627,6 @@ namespace GenDaLangDu {
             } else if (_chkLetters.Checked) {
               char lc = char.ToLowerInvariant(KeyTranslator.NormalizeLatin(c));
               _speaker.SpeakEn(lc.ToString());
-              RememberRecentChar(lc);
             }
             continue;
           }
@@ -644,19 +637,12 @@ namespace GenDaLangDu {
           if (char.IsDigit(c) || (c >= '０' && c <= '９')) {
             if (!_composing && _chkDigits.Checked) {
               SpeakZh(KeyTranslator.DigitToChinese(c));
-              RememberRecentChar(c >= '０' && c <= '９' ? (char)(c - 0xFF10 + '0') : c);
             }
             continue;
           }
           if (KeyTranslator.IsCjk(c)) {
             _composing = false;
             MarkChineseCommit();
-            string cs = c.ToString();
-            if (!IsCharSpokenRecently(c)) {
-              SpeakZh(cs);
-              RememberSpoken(cs);
-              RememberRecentChar(c);
-            }
             continue;
           }
           string pn = KeyTranslator.PunctName(c);
@@ -666,11 +652,15 @@ namespace GenDaLangDu {
               _lastPunctName = pn;
               _punctKeyPending = true;
               _lastPunctKeyAt = DateTime.Now;
-              SpeakZh(pn);
-              RememberSpoken(pn);
+              if (!RecentlySpoken(pn)) {
+                SpeakZh(pn);
+                RememberSpoken(pn);
+              }
             } else if (_chkPunct.Checked) {
-              SpeakZh(pn);
-              RememberSpoken(pn);
+              if (!RecentlySpoken(pn)) {
+                SpeakZh(pn);
+                RememberSpoken(pn);
+              }
             }
             continue;
           }
@@ -725,50 +715,6 @@ namespace GenDaLangDu {
       _lastSpokenAt = DateTime.Now;
     }
 
-    private void RememberRecentChar(char c) {
-      try {
-        _recentChars.Add(new RecentChar { Char = c, At = DateTime.Now });
-        if (_recentChars.Count > 40) _recentChars.RemoveRange(0, _recentChars.Count - 40);
-      } catch { }
-    }
-
-    /// <summary>提交文本的每个汉字是否都在最近1.5秒内被按键通道单独读过（避免双读）。</summary>
-    private bool AllCharsSpokenRecently(string text) {
-      if (string.IsNullOrEmpty(text)) return false;
-      DateTime now = DateTime.Now;
-      foreach (char c in text) {
-        char key = KeyTranslator.IsLatinLetter(c) ? char.ToLowerInvariant(KeyTranslator.NormalizeLatin(c)) : c;
-        if (!KeyTranslator.IsCjk(c) && !KeyTranslator.IsLatinLetter(c) &&
-            !char.IsDigit(c) && !(c >= '０' && c <= '９')) continue;
-        bool found = false;
-        for (int i = _recentChars.Count - 1; i >= 0; i--) {
-          if (_recentChars[i].Char == key && (now - _recentChars[i].At).TotalMilliseconds < 1500) {
-            found = true;
-            break;
-          }
-        }
-        if (!found) return false;
-      }
-      return true;
-    }
-
-    private bool IsCharSpokenRecently(char c) {
-      char key = KeyTranslator.IsLatinLetter(c) ? char.ToLowerInvariant(KeyTranslator.NormalizeLatin(c)) : c;
-      DateTime now = DateTime.Now;
-      for (int i = _recentChars.Count - 1; i >= 0; i--) {
-        if (_recentChars[i].Char == key && (now - _recentChars[i].At).TotalMilliseconds < 1500) return true;
-      }
-      return false;
-    }
-
-    private void RememberCharsOf(string text) {
-      if (string.IsNullOrEmpty(text)) return;
-      foreach (char c in text) {
-        if (KeyTranslator.IsCjk(c) || (c >= 0x3000 && c <= 0x9FFF) ||
-            (c >= 0xFF00 && c <= 0xFFEF)) RememberRecentChar(c);
-      }
-    }
-
     private bool TrySpeakInserted(string ins) {
       if (string.IsNullOrEmpty(ins)) return false;
       if ((DateTime.Now - _lastTsfCommitAt).TotalMilliseconds < 600) return false;
@@ -777,13 +723,11 @@ namespace GenDaLangDu {
       string spk = PunctSpokenForm(FilterForSpeech(clean));
       if (string.IsNullOrEmpty(spk)) return false;
       if (!HasChineseText(clean)) return false;
-      if (AllCharsSpokenRecently(clean)) return false;
       if (!AllowPunctSpeak(clean)) return false;
       if (RecentlySpoken(spk)) return false;
       _composing = false;
       SpeakZh(spk);
       RememberSpoken(spk);
-      RememberCharsOf(clean);
       MarkChineseCommit();
       DebugLog("UI_INSERT [" + ins + "]");
       return true;
@@ -795,7 +739,6 @@ namespace GenDaLangDu {
         if (string.IsNullOrEmpty(text)) return;
         if (IsOurProcessForeground()) return;
         if (!IsCommitFromForeground(pid)) return;
-        if (AllCharsSpokenRecently(text)) return;
         bool hasCjk = HasChineseText(text);
         if (hasCjk) {
           string spk = PunctSpokenForm(FilterForSpeech(text));
@@ -804,7 +747,6 @@ namespace GenDaLangDu {
           _composing = false;
           SpeakZh(spk);
           RememberSpoken(spk);
-          RememberCharsOf(text);
           MarkChineseCommit();
           _lastTsfCommitAt = DateTime.Now;
           DebugLog("TSF_COMMIT [" + text + "]");
@@ -815,12 +757,10 @@ namespace GenDaLangDu {
           if (KeyTranslator.IsLatinLetter(c)) {
             if (_chkLetters.Checked) {
               _speaker.SpeakEn(KeyTranslator.NormalizeLatin(c).ToString().ToLowerInvariant());
-              RememberRecentChar(char.ToLowerInvariant(KeyTranslator.NormalizeLatin(c)));
             }
           } else if (char.IsDigit(c) || (c >= '０' && c <= '９')) {
             if (_chkDigits.Checked) {
               SpeakZh(KeyTranslator.DigitToChinese(c));
-              RememberRecentChar(c >= '０' && c <= '９' ? (char)(c - 0xFF10 + '0') : c);
             }
           }
         }
