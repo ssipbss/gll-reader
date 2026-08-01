@@ -36,6 +36,7 @@ namespace GenDaLangDu {
     private DateTime _lastMouseDownAt = DateTime.MinValue;
     private DateTime _lastKeyAt = DateTime.MinValue;
     private DateTime _lastSpokenAt = DateTime.MinValue;
+    private DateTime _lastDeleteSpeakAt = DateTime.MinValue;
     private bool _closingByTrayExit;
     private bool _loading;
     private bool _forceDebug;
@@ -466,6 +467,7 @@ namespace GenDaLangDu {
       if (!_testMode && IsOurProcessForeground()) return;
       if (e.IsUp) return;
       if (e.IsAutoRepeat) return;
+      if (e.Vk != 0x08 && e.Vk != 0x2E) _lastDeleteSpeakAt = DateTime.MinValue;
       _lastKeyAt = DateTime.Now;
       DebugLog("KEY vk=0x" + e.Vk.ToString("X") + " scan=0x" + e.Scan.ToString("X"));
       if (!IsAltKey(e.Vk) && AltDown()) {
@@ -522,7 +524,13 @@ namespace GenDaLangDu {
       }
         } else if (_chkFunc.Checked) {
           if (e.Vk >= 0x70 && e.Vk <= 0x87) _speaker.SpeakEn("F" + (e.Vk - 0x70 + 1).ToString());
-          else SpeakZh(keyName);
+          else if ((e.Vk == 0x08 || e.Vk == 0x2E) &&
+                   (DateTime.Now - _lastDeleteSpeakAt).TotalMilliseconds < 800) {
+            DebugLog("DELETE_COALESCE vk=0x" + e.Vk.ToString("X"));
+          } else {
+            if (e.Vk == 0x08 || e.Vk == 0x2E) _lastDeleteSpeakAt = DateTime.Now;
+            SpeakZh(keyName);
+          }
         }
         ScheduleImeCheck();
         return;
