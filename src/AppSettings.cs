@@ -14,5 +14,6 @@ namespace GenDaLangDu {
     public bool Modifiers = true;
     public bool DebugLog = false;
     public bool ClickSpeak = false;
+    public bool ClickSpeakInitialized = false;
   }
 }

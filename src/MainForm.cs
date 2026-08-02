@@ -500,7 +500,7 @@ namespace GenDaLangDu {
       _chkFunc = MakeCheck("朗读功能键", new Point(20, 134));
       _chkModifiers = MakeCheck("朗读修饰键", new Point(252, 44));
       _chkClickSpeak = MakeCheck("选中文字时朗读", new Point(252, 74));
-      _chkClickSpeak.Checked = false;
+      _chkClickSpeak.Checked = true;
       _chkDebug = MakeCheck("记录调试日志", new Point(252, 104));
       _chkDebug.Checked = false;
 
@@ -1062,7 +1062,10 @@ namespace GenDaLangDu {
         DebugLog("UI_INSERT_SKIP punct_tail");
         return false;
       }
-      string spk = PunctSpokenForm(FilterForSpeech(clean));
+      /* 关闭"朗读标点"时不再把标点转成名称念（保留原标点让语音自然停顿） */
+      string spk = _chkPunct.Checked
+        ? PunctSpokenForm(FilterForSpeech(clean))
+        : FilterForSpeech(clean);
       if (string.IsNullOrEmpty(spk)) {
         DebugLog("UI_INSERT_SKIP spk");
         return false;
@@ -1132,7 +1135,9 @@ namespace GenDaLangDu {
         if (!IsCommitFromForeground(pid)) return;
         bool hasCjk = HasChineseText(text);
         if (hasCjk) {
-          string spk = PunctSpokenForm(FilterForSpeech(text));
+          string spk = _chkPunct.Checked
+            ? PunctSpokenForm(FilterForSpeech(text))
+            : FilterForSpeech(text);
           if (string.IsNullOrEmpty(spk)) return;
           if ((DateTime.Now - _lastTypingCommitKeyAt).TotalMilliseconds > 1000) {
             DebugLog("TSF_NOTYPING_SKIP [" + spk + "]");
@@ -1343,6 +1348,10 @@ namespace GenDaLangDu {
     /// 仅在鼠标/键盘活动后查询，平时零开销。</summary>
     private void UpdateSelectionButton() {
       if (_selectionFloater == null) return;
+      if (!_chkClickSpeak.Checked) {
+        HideSelectionButton();
+        return;
+      }
       if (!_listening || _testMode) {
         HideSelectionButton();
         return;
@@ -1430,6 +1439,7 @@ namespace GenDaLangDu {
     /// <summary>点击朗读按钮：用 Ctrl+C 复制当前选区到剪贴板，读取后恢复剪贴板。
     /// 不用 UIA 读选区文本（某些应用会触发 UIA 原生崩溃）。</summary>
     private void OnSelectionSpeakRequested() {
+      if (!_chkClickSpeak.Checked) return;
       /* 按钮 Click 与鼠标钩子兜底可能同时触发，400ms 内只响应一次 */
       if ((DateTime.Now - _lastSpeakRequestAt).TotalMilliseconds < 400) return;
       _lastSpeakRequestAt = DateTime.Now;
@@ -1458,6 +1468,20 @@ namespace GenDaLangDu {
       if (HasChineseText(t)) {
         SpeakZh(t);
       } else {
+        bool hasLetter = false;
+        bool hasDigit = false;
+        foreach (char ch in t) {
+          if (KeyTranslator.IsLatinLetter(ch)) hasLetter = true;
+          else if (ch >= '0' && ch <= '9') hasDigit = true;
+        }
+        if (hasLetter && !_chkLetters.Checked) {
+          DebugLog("SEL_SPEAK_LETTERS_OFF");
+          return;
+        }
+        if (!hasLetter && hasDigit && !_chkDigits.Checked) {
+          DebugLog("SEL_SPEAK_DIGITS_OFF");
+          return;
+        }
         _speaker.SpeakEnWord(t);
       }
       _selectionFloater.SetReading(true);
@@ -1616,7 +1640,7 @@ namespace GenDaLangDu {
             if (ins.Length > MaxUiDiffLen) {
               DebugLog("UI_DIFF_SKIP_LONG [" + ins + "]");
             } else {
-              if (!_chkClickSpeak.Checked && _lastMouseDownAt > _lastKeyAt) {
+              if (_lastMouseDownAt > _lastKeyAt) {
                 _lastMouseDownAt = DateTime.MinValue;
                 DebugLog("UI_CLICK_IGNORED [" + ins + "]");
                 return;
@@ -1670,7 +1694,7 @@ namespace GenDaLangDu {
       _lastCaretAbsValid = caretAbs;
       if (string.IsNullOrEmpty(inserted)) return;
       DebugLog("UI_DIFF [" + inserted + "] caret=" + caret + " delta=" + deltaLen);
-      if (!_chkClickSpeak.Checked && _lastMouseDownAt > _lastKeyAt) {
+      if (_lastMouseDownAt > _lastKeyAt) {
         _lastMouseDownAt = DateTime.MinValue;
         DebugLog("UI_CLICK_IGNORED [" + inserted + "]");
         return;
@@ -2250,6 +2274,12 @@ namespace GenDaLangDu {
       _chkModifiers.Checked = _settings.Modifiers;
       _chkDebug.Checked = _settings.DebugLog;
       _chkClickSpeak.Checked = _settings.ClickSpeak;
+      if (!_settings.ClickSpeakInitialized) {
+        /* 旧版本升级：选中朗读默认开启（旧设置里没有这个开关的初始化标记） */
+        _settings.ClickSpeak = true;
+        _settings.ClickSpeakInitialized = true;
+        _chkClickSpeak.Checked = true;
+      }
       _loading = false;
     }
 
@@ -2333,6 +2363,7 @@ namespace GenDaLangDu {
         _settings.Modifiers = _chkModifiers.Checked;
         _settings.DebugLog = _chkDebug.Checked;
         _settings.ClickSpeak = _chkClickSpeak.Checked;
+        _settings.ClickSpeakInitialized = true;
         string settingsDir = Path.GetDirectoryName(SettingsPath());
         if (!string.IsNullOrEmpty(settingsDir)) Directory.CreateDirectory(settingsDir);
         XmlSerializer ser = new XmlSerializer(typeof(AppSettings));

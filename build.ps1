@@ -73,101 +73,13 @@ Copy-Item (Join-Path $out 'app.exe') (Join-Path $finalOut '归零归零.exe') -F
 Copy-Item (Join-Path $root '使用说明.txt') (Join-Path $finalOut '使用说明.txt') -Force
 foreach ($name in @('gll_tsf_hook64.dll', 'gll_tsf_hook32.dll')) {
   $srcDll = Join-Path $root ('tools\tsfhook\bin\' + $name)
-  $dstDll = Join-Path $finalOut $name
-  $dstDll2 = Join-Path $finalOut ($name -replace '\.dll$', '_v2.dll')
-  $dstDll3 = Join-Path $finalOut ($name -replace '\.dll$', '_v3.dll')
-  $dstDll4 = Join-Path $finalOut ($name -replace '\.dll$', '_v4.dll')
-  $dstDll5 = Join-Path $finalOut ($name -replace '\.dll$', '_v5.dll')
-  $dstDll6 = Join-Path $finalOut ($name -replace '\.dll$', '_v6.dll')
-  $dstDll7 = Join-Path $finalOut ($name -replace '\.dll$', '_v7.dll')
-  $dstDll8 = Join-Path $finalOut ($name -replace '\.dll$', '_v8.dll')
-  $dstDll9 = Join-Path $finalOut ($name -replace '\.dll$', '_v9.dll')
-  $dstDll10 = Join-Path $finalOut ($name -replace '\.dll$', '_v10.dll')
-  $dstDll11 = Join-Path $finalOut ($name -replace '\.dll$', '_v11.dll')
-  $dstDll12 = Join-Path $finalOut ($name -replace '\.dll$', '_v12.dll')
-  $dstDll13 = Join-Path $finalOut ($name -replace '\.dll$', '_v13.dll')
-  $dstDll14 = Join-Path $finalOut ($name -replace '\.dll$', '_v14.dll')
-  $dstDll15 = Join-Path $finalOut ($name -replace '\.dll$', '_v15.dll')
-  $dstDll16 = Join-Path $finalOut ($name -replace '\.dll$', '_v16.dll')
-  try {
-    Copy-Item $srcDll $dstDll -Force
-  } catch {
-    Write-Warning ("无法更新 " + $name + "（可能被其他程序占用，沿用现有文件）")
-  }
-  try {
-    Copy-Item $srcDll $dstDll2 -Force
-  } catch {
-    Write-Warning ("无法更新 " + ($name -replace '\.dll$', '_v2.dll'))
-  }
-  try {
-    Copy-Item $srcDll $dstDll3 -Force
-  } catch {
-    Write-Warning ("无法更新 " + ($name -replace '\.dll$', '_v3.dll'))
-  }
-  try {
-    Copy-Item $srcDll $dstDll4 -Force
-  } catch {
-    Write-Warning ("无法更新 " + ($name -replace '\.dll$', '_v4.dll'))
-  }
-  try {
-    Copy-Item $srcDll $dstDll5 -Force
-  } catch {
-    Write-Warning ("无法更新 " + ($name -replace '\.dll$', '_v5.dll'))
-  }
-  try {
-    Copy-Item $srcDll $dstDll6 -Force
-  } catch {
-    Write-Warning ("无法更新 " + ($name -replace '\.dll$', '_v6.dll'))
-  }
-  try {
-    Copy-Item $srcDll $dstDll7 -Force
-  } catch {
-    Write-Warning ("无法更新 " + ($name -replace '\.dll$', '_v7.dll'))
-  }
-  try {
-    Copy-Item $srcDll $dstDll8 -Force
-  } catch {
-    Write-Warning ("无法更新 " + ($name -replace '\.dll$', '_v8.dll'))
-  }
-  try {
-    Copy-Item $srcDll $dstDll9 -Force
-  } catch {
-    Write-Warning ("无法更新 " + ($name -replace '\.dll$', '_v9.dll'))
-  }
-  try {
-    Copy-Item $srcDll $dstDll10 -Force
-  } catch {
-    Write-Warning ("无法更新 " + ($name -replace '\.dll$', '_v10.dll'))
-  }
-  try {
-    Copy-Item $srcDll $dstDll11 -Force
-  } catch {
-    Write-Warning ("无法更新 " + ($name -replace '\.dll$', '_v11.dll'))
-  }
-  try {
-    Copy-Item $srcDll $dstDll12 -Force
-  } catch {
-    Write-Warning ("无法更新 " + ($name -replace '\.dll$', '_v12.dll'))
-  }
-  try {
-    Copy-Item $srcDll $dstDll13 -Force
-  } catch {
-    Write-Warning ("无法更新 " + ($name -replace '\.dll$', '_v13.dll'))
-  }
-  try {
-    Copy-Item $srcDll $dstDll14 -Force
-  } catch {
-    Write-Warning ("无法更新 " + ($name -replace '\.dll$', '_v14.dll'))
-  }
-  try {
-    Copy-Item $srcDll $dstDll15 -Force
-  } catch {
-    Write-Warning ("无法更新 " + ($name -replace '\.dll$', '_v15.dll'))
-  }
-  try {
-    Copy-Item $srcDll $dstDll16 -Force
-  } catch {
-    Write-Warning ("无法更新 " + ($name -replace '\.dll$', '_v16.dll'))
+  foreach ($dst in @($name, ($name -replace '\.dll$', '_v16.dll'))) {
+    $dstFull = Join-Path $finalOut $dst
+    try {
+      Copy-Item $srcDll $dstFull -Force
+    } catch {
+      Write-Warning ("无法更新 " + $dst + "（可能被其他程序占用，沿用现有文件）")
+    }
   }
 }
 Write-Output ("BUILD OK: " + (Join-Path $finalOut '归零归零.exe'))
