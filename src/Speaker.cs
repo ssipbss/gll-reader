@@ -182,6 +182,8 @@ namespace GenDaLangDu {
         if (enText.Length == 0) continue;
         if (Log != null) Log("EN_MERGE [" + enText + "] word=" + (asWord ? 1 : 0));
         int enRate = Math.Max(-10, _rate - 2);
+        /* 功能键单词比普通英文再快一档，减少等待感 */
+        if (asWord) enRate = Math.Min(10, enRate + 3);
         /* 字母走逐字符朗读（say-as characters）；功能键单词走正常文本，避免被拼读 */
         if (_enIsRt && _enRt != null) SpeakRtSync(_enRt, enText, "EN", enRate, !asWord);
         else SpeakSync(_en, enText, "EN", ref _lastRateEn, ref _lastVolumeEn, enRate, !asWord);
