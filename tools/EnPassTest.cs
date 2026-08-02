@@ -11,7 +11,7 @@ class EnPassTest {
   }
 
   private static EnPassTracker NewTracker() {
-    EnPassTracker t = new EnPassTracker(200);
+    EnPassTracker t = new EnPassTracker(300);
     _confirmed = null;
     t.Confirmed += delegate(string s) { _confirmed = s; };
     return t;
@@ -24,12 +24,19 @@ class EnPassTest {
     t.Note("d", "el1");
     Check(t.IsArmed, "记录后进入候选");
     Check(t.Letters == "d", "候选字母正确");
-    Check(t.Check() == false, "未超时不确认");
-    Check(_confirmed == null, "未超时无确认事件");
 
-    System.Threading.Thread.Sleep(300);
-    Check(t.Check() == true, "超时确认");
-    Check(_confirmed == "d", "确认事件携带字母");
+    System.Threading.Thread.Sleep(400);
+    Check(t.Check() == true, "停顿后候选过期清理");
+    Check(!t.IsArmed, "过期清理后清空");
+    Check(_confirmed == null, "1-4个字母永不确认英文");
+
+    t = NewTracker();
+    t.Note("h", "el1");
+    t.Note("e", "el1");
+    t.Note("l", "el1");
+    t.Note("l", "el1");
+    t.Note("o", "el1");
+    Check(_confirmed == "hello", "超过4个字母立即确认英文");
     Check(!t.IsArmed, "确认后清空");
 
     t = NewTracker();
@@ -43,17 +50,15 @@ class EnPassTest {
     t.Note("d", "el1");
     t.Cancel("zh");
     Check(!t.IsArmed, "取消后清空");
-    System.Threading.Thread.Sleep(300);
+    System.Threading.Thread.Sleep(400);
     Check(t.Check() == false && _confirmed == null, "取消后不确认");
 
     t = NewTracker();
     t.Note("a", "el1");
     t.Note("b", "el1");
+    System.Threading.Thread.Sleep(400);
     t.Note("c", "el1");
-    t.Note("d", "el1");
-    t.Note("e", "el1");
-    Check(_confirmed == "abcde", "超过4字母立即确认");
-    Check(!t.IsArmed, "立即确认后清空");
+    Check(t.Letters == "c", "过期后再输入不串味累积（从新字母重新开始）");
 
     Console.WriteLine(_fails == 0 ? "ALL PASS" : (_fails + " FAILED"));
     Environment.Exit(_fails == 0 ? 0 : 1);
