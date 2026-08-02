@@ -219,8 +219,6 @@ namespace GenDaLangDu {
         if (Log != null) Log("EN_MERGE [" + enText + "] word=" + (asWord ? 1 : 0));
         int enRate = Math.Max(-10, _rate - 2);
         if (asWord) enRate = Math.Min(10, enRate + 3);
-        /* 字母放慢到比中文慢4档：短元音字母（E/I/O/A）念得更完整、更清晰 */
-        else enRate = Math.Max(-10, _rate - 4);
         if (_enIsRt && _enRt != null) SpeakRtSync(_enRt, enText, "EN", enRate, !asWord);
         else SpeakSync(_en, enText, "EN", ref _lastRateEn, ref _lastVolumeEn, enRate, !asWord);
       }
@@ -378,7 +376,10 @@ namespace GenDaLangDu {
         if (bps <= 0) return path;
         int total = dataSize / bps;
         if (total <= 0) return path;
-        int threshold = bits == 16 ? 12 : 4;
+        /* 阈值调低：字母等短音的软起音/尾音不再被误判为静音裁掉 */
+        int threshold = bits == 16 ? 4 : 3;
+        /* 短音频（<300ms，如单个字母）不裁剪，避免首尾被截 */
+        if (total < (int)(sampleRate * 0.30)) return path;
         int first = -1;
         int last = -1;
         for (int i = 0; i < total; i++) {
@@ -391,8 +392,8 @@ namespace GenDaLangDu {
           }
         }
         if (first < 0 || last < first) return path;
-        int headMargin = Math.Max(1, (int)(sampleRate * 0.025));
-        int tailMargin = Math.Max(1, (int)(sampleRate * 0.040));
+        int headMargin = Math.Max(1, (int)(sampleRate * 0.010));
+        int tailMargin = Math.Max(1, (int)(sampleRate * 0.015));
         int start = Math.Max(0, first - headMargin);
         int end = Math.Min(total, last + tailMargin);
         int newSize = (end - start) * bps;
