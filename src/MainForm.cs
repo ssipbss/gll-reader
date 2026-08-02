@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -63,7 +63,6 @@ namespace GenDaLangDu {
     private DateTime _lastDeleteSpeakAt = DateTime.MinValue;
     private DateTime _lastDeleteAt = DateTime.MinValue;
     private DateTime _lastZhCommitAt = DateTime.MinValue;
-    private DateTime _lastTsfCommitAt = DateTime.MinValue;
     private string _lastDiffCommitText = null;
     private DateTime _lastDiffCommitAt = DateTime.MinValue;
     private DateTime _lastTypingCommitKeyAt = DateTime.MinValue;
@@ -866,7 +865,7 @@ namespace GenDaLangDu {
             _lastPacketCjkAt = DateTime.Now;
             bool diffAlreadySpoke = c.ToString() == _lastDiffCommitText &&
                                     (DateTime.Now - _lastDiffCommitAt).TotalMilliseconds < 600;
-            if (!diffAlreadySpoke && !TextReader.IsTsfCoveredForeground()) {
+            if (!diffAlreadySpoke && !TextReader.IsKnownSlowApp()) {
               BufferPacketZh(c);
             }
             continue;
@@ -967,6 +966,10 @@ namespace GenDaLangDu {
           bool diffAlreadySpoke = delta == _lastDiffCommitText &&
                                   (DateTime.Now - _lastDiffCommitAt).TotalMilliseconds < 600;
           bool recentTyping = (DateTime.Now - _lastTypingCommitKeyAt).TotalMilliseconds < 1000;
+          /* 中文已上屏：状态自愈为中文（即使朗读条件不满足） */
+          if (!string.IsNullOrEmpty(delta) && HasCjk(delta)) {
+            MarkChineseCommit();
+          }
           if (!string.IsNullOrEmpty(delta) && recentTyping && !diffAlreadySpoke && !RecentlySpoken(delta)) {
             CancelPendingSpace();
             SpeakZh(delta);
@@ -1042,10 +1045,6 @@ namespace GenDaLangDu {
         DebugLog("UI_INSERT_SKIP packet");
         return false;
       }
-      if ((DateTime.Now - _lastTsfCommitAt).TotalMilliseconds < 600) {
-        DebugLog("UI_INSERT_SKIP tsf");
-        return false;
-      }
       string clean = StripCompositionLetters(ins);
       if (clean.Length == 0) {
         DebugLog("UI_INSERT_SKIP clean0");
@@ -1076,6 +1075,9 @@ namespace GenDaLangDu {
         DebugLog("UI_INSERT_SKIP nozh");
         return false;
       }
+      /* 中文已上屏（无论朗读是否通过、是打字还是粘贴/语音输入）：
+         输入法状态自愈为中文 */
+      MarkChineseCommit();
       /* 因果校验：差异结果必须能用最近的按键解释（打过五笔字母+提交），
          粘贴（Ctrl+V/Shift+Insert）的内容与按键对不上，不朗读 */
       if (!HasTypingSignature()) {
@@ -1129,80 +1131,6 @@ namespace GenDaLangDu {
       }
     }
 
-    private void OnTsfCommit(uint pid, string text) {
-      try {
-        if (!_listening) return;
-        if (string.IsNullOrEmpty(text)) return;
-        if (IsOurProcessForeground()) return;
-        if (!IsCommitFromForeground(pid)) return;
-        bool hasCjk = HasChineseText(text);
-        if (hasCjk) {
-          string spk = _chkPunct.Checked
-            ? PunctSpokenForm(FilterForSpeech(text))
-            : FilterForSpeech(text);
-          if (string.IsNullOrEmpty(spk)) return;
-          if ((DateTime.Now - _lastTypingCommitKeyAt).TotalMilliseconds > 1000) {
-            DebugLog("TSF_NOTYPING_SKIP [" + spk + "]");
-            return;
-          }
-          bool diffAlreadySpoke = spk == _lastDiffCommitText &&
-                                  (DateTime.Now - _lastDiffCommitAt).TotalMilliseconds < 600;
-          if (diffAlreadySpoke) {
-            DebugLog("TSF_DUP_SKIP [" + spk + "]");
-            return;
-          }
-          if (RecentlySpoken(spk)) return;
-          _composing = false;
-          SpeakZh(spk);
-          RememberSpoken(spk);
-          MarkChineseCommit();
-          _lastTsfCommitAt = DateTime.Now;
-          DebugLog("TSF_COMMIT [" + text + "]");
-          return;
-        }
-        /* 已上屏的英文/数字（Shift 或大写锁定切英文后直接上屏） */
-        bool hasLatin = false;
-        foreach (char c in text) {
-          if (KeyTranslator.IsLatinLetter(c)) {
-            hasLatin = true;
-            if (_chkLetters.Checked) {
-              _speaker.SpeakEn(KeyTranslator.NormalizeLatin(c).ToString().ToLowerInvariant());
-            }
-          } else if (char.IsDigit(c) || (c >= '０' && c <= '９')) {
-            if (_chkDigits.Checked) {
-              SpeakZh(KeyTranslator.DigitToChinese(c));
-            }
-          }
-        }
-        /* 自愈：非组字、非临时 Shift/大写锁定状态下英文直接上屏，说明程序确实处于英文模式 */
-        if (hasLatin && !_composing && !ShiftHeld() && !CapsLockOn()) {
-          _appStates.SetEnglishCurrent();
-          DebugLog("STATE_SELFHEAL_ENGLISH [" + text + "]");
-        }
-        if (text.Length > 0) {
-          _lastTsfCommitAt = DateTime.Now;
-          DebugLog("TSF_LETTERS [" + text + "]");
-        }
-      } catch { }
-    }
-
-    private static bool IsCommitFromForeground(uint pid) {
-      try {
-        IntPtr fg = Native.GetForegroundWindow();
-        if (fg == IntPtr.Zero) return true;
-        uint fgPid;
-        Native.GetWindowThreadProcessId(fg, out fgPid);
-        if (fgPid == pid) return true;
-        using (System.Diagnostics.Process p1 = System.Diagnostics.Process.GetProcessById((int)pid)) {
-          using (System.Diagnostics.Process p2 = System.Diagnostics.Process.GetProcessById((int)fgPid)) {
-            return string.Equals(p1.ProcessName, p2.ProcessName,
-                                 StringComparison.OrdinalIgnoreCase);
-          }
-        }
-      } catch {
-        return true;
-      }
-    }
 
     private static string StripCompositionLetters(string s) {
       if (string.IsNullOrEmpty(s)) return s;

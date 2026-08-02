@@ -62,24 +62,7 @@ if ($LASTEXITCODE -ne 0) { throw '主程序编译失败' }
 & $csc ('@' + $testRsp)
 if ($LASTEXITCODE -ne 0) { throw '测试工具编译失败' }
 
-$csc32 = 'C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe'
-if (-not (Test-Path $csc32)) { throw '找不到 32 位 csc.exe' }
-& $csc32 /nologo /target:exe /platform:x86 /out:bin\gll_hook32_host.exe tools\tsfhook\gll_hook32_host.cs
-if ($LASTEXITCODE -ne 0) { throw '32位钩子宿主编译失败' }
-Copy-Item (Join-Path $out 'gll_hook32_host.exe') (Join-Path $finalOut 'gll_hook32_host.exe') -Force
-Copy-Item (Join-Path $out 'gll_hook32_host.exe') (Join-Path $root 'tools\tsfhook\bin\gll_hook32_host.exe') -Force
 
 Copy-Item (Join-Path $out 'app.exe') (Join-Path $finalOut '归零归零.exe') -Force
 Copy-Item (Join-Path $root '使用说明.txt') (Join-Path $finalOut '使用说明.txt') -Force
-foreach ($name in @('gll_tsf_hook64.dll', 'gll_tsf_hook32.dll')) {
-  $srcDll = Join-Path $root ('tools\tsfhook\bin\' + $name)
-  foreach ($dst in @($name, ($name -replace '\.dll$', '_v16.dll'))) {
-    $dstFull = Join-Path $finalOut $dst
-    try {
-      Copy-Item $srcDll $dstFull -Force
-    } catch {
-      Write-Warning ("无法更新 " + $dst + "（可能被其他程序占用，沿用现有文件）")
-    }
-  }
-}
 Write-Output ("BUILD OK: " + (Join-Path $finalOut '归零归零.exe'))

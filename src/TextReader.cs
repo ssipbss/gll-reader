@@ -41,11 +41,7 @@ namespace GenDaLangDu {
         // 否则应用忙（如 WPS 新建文档）时调用会卡死整个程序
         // TSF 钩子激活时 WPS 提交由钩子上报；不再后台轮询 WPS COM，
         // 避免给 WPS 打字增加负载（COM 兜底仅在钩子未安装时使用）
-        if (!TsfHook.IsActive) {
-          string wpsText = WpsComReader.GetFocusedText(out elementId, out diag, out caret);
-          if (wpsText != null) return wpsText;
-        }
-        if (!IsTsfCoveredForeground()) {
+        if (!IsKnownSlowApp()) {
           AutomationElement el = AutomationElement.FocusedElement;
           string r = ReadFocused(el, out elementId, out diag, out caret);
           if (r != null) caretAbs = _lastCaretAbsolute;
@@ -124,7 +120,7 @@ namespace GenDaLangDu {
       return false;
     }
 
-    internal static bool IsTsfCoveredForeground() {
+    internal static bool IsKnownSlowApp() {
       try {
         IntPtr h = Native.GetForegroundWindow();
         if (h == IntPtr.Zero) return false;
