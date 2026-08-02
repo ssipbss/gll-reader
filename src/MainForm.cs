@@ -43,7 +43,6 @@ namespace GenDaLangDu {
     private DateTime _lastChineseCommitAt = DateTime.MinValue;
     private IntPtr _lastChineseCommitHwnd = IntPtr.Zero;
     private bool _composing;
-    private bool _imeEnglishMode;
     private DateTime _lastMouseDownAt = DateTime.MinValue;
     private DateTime _lastKeyAt = DateTime.MinValue;
     private DateTime _lastSpokenAt = DateTime.MinValue;
@@ -74,10 +73,10 @@ namespace GenDaLangDu {
     private DateTime _lastElevationAskAt = DateTime.MinValue;
     private const int MaxUiDiffLen = 10;
 
-    private bool _shiftArmed;
-    private bool _englishBeforeArm;
-    private bool _shiftArmValue;
-    private DateTime _shiftArmedAt = DateTime.MinValue;
+    private AppStateTracker _appStates = new AppStateTracker();
+    private DateTime _shiftDownAt = DateTime.MinValue;
+    private bool _shiftTapArmed;
+    private uint _shiftTapPid;
     private bool _closingByTrayExit;
     private bool _loading;
     private bool _forceDebug;
@@ -126,7 +125,7 @@ namespace GenDaLangDu {
 
       _uiTimer = new System.Windows.Forms.Timer();
       _uiTimer.Interval = 100;
-      _uiTimer.Tick += delegate { CheckUiText(); };
+      _uiTimer.Tick += delegate { TrackFocus(); CheckUiText(); };
 
       _selfElevated = SelfElevated();
       _elevTimer = new System.Windows.Forms.Timer();
@@ -152,7 +151,7 @@ namespace GenDaLangDu {
         Enabled = false;
         StartListening();
         _injectTimer = new System.Windows.Forms.Timer();
-        _injectTimer.Interval = 1200;
+        _injectTimer.Interval = 2500;
         _injectTimer.Tick += delegate {
           _injectTimer.Stop();
           SimulateKey(0x41);
@@ -174,6 +173,20 @@ namespace GenDaLangDu {
           SimulateKey(0x10);
           SimulateKey(0x41);
           SimulateKey(0x42);
+          /* Shift 轻按（120ms 内松开）应翻转当前程序状态 */
+          SimulateKey(0x10);
+          System.Threading.Thread.Sleep(120);
+          SimulateKeyUp(0x10);
+          System.Threading.Thread.Sleep(400);
+          /* Shift 长按（600ms）不应翻转 */
+          SimulateKey(0x10);
+          System.Threading.Thread.Sleep(600);
+          SimulateKeyUp(0x10);
+          System.Threading.Thread.Sleep(400);
+          /* 再轻按一次，翻回 */
+          SimulateKey(0x10);
+          System.Threading.Thread.Sleep(120);
+          SimulateKeyUp(0x10);
           LogTest("SIMULATE_DONE");
         };
         _injectTimer.Start();
@@ -211,6 +224,11 @@ namespace GenDaLangDu {
     private void SimulateKey(uint vk) {
       ushort scan = InputSender.ScanOf((ushort)vk);
       OnKey(this, new KeyHookEventArgs { Vk = vk, Scan = scan, IsUp = false, IsSysKey = false });
+    }
+
+    private void SimulateKeyUp(uint vk) {
+      ushort scan = InputSender.ScanOf((ushort)vk);
+      OnKey(this, new KeyHookEventArgs { Vk = vk, Scan = scan, IsUp = true, IsSysKey = false });
     }
 
     private void ParseArgs(string[] args) {
@@ -528,14 +546,27 @@ namespace GenDaLangDu {
     private void OnKey(object sender, KeyHookEventArgs e) {
       if (!_listening) return;
       if (!_testMode && IsOurProcessForeground()) return;
-      if (e.IsUp) return;
+      if (e.IsUp) {
+        HandleKeyUp(e);
+        return;
+      }
       if (e.IsAutoRepeat) return;
       if (e.Vk != 0x08 && e.Vk != 0x2E) _lastDeleteSpeakAt = DateTime.MinValue;
-      bool packetIsLetter = e.Vk == 0xE7 && KeyTranslator.IsLatinLetter((char)(e.Scan & 0xFFFF));
-      if (!(e.Vk >= 0x41 && e.Vk <= 0x5A) && !packetIsLetter &&
-          e.Vk != 0x10 && e.Vk != 0xA0 && e.Vk != 0xA1) {
-        if (_shiftArmed) _imeEnglishMode = _englishBeforeArm;
-        _shiftArmed = false;
+      bool isShift = e.Vk == 0x10 || e.Vk == 0xA0 || e.Vk == 0xA1;
+      if (isShift) {
+        bool ctrl = CtrlDown();
+        bool alt = AltDown();
+        bool win = WinDown();
+        if (ctrl || alt || win) {
+          _shiftTapArmed = false;
+          DebugLog("SHIFT_TAP_CANCEL_COMBO ctrl=" + ctrl + " alt=" + alt + " win=" + win);
+        } else {
+          _shiftTapArmed = true;
+          _shiftDownAt = DateTime.Now;
+          _shiftTapPid = CurrentForegroundPid();
+        }
+      } else {
+        _shiftTapArmed = false;
       }
       _lastKeyAt = DateTime.Now;
       DebugLog("KEY vk=0x" + e.Vk.ToString("X") + " scan=0x" + e.Scan.ToString("X"));
@@ -640,19 +671,6 @@ namespace GenDaLangDu {
             }
           }
           if (_composing) _lastPinyinKeyAt = DateTime.Now;
-          if (e.Vk == 0x10 || e.Vk == 0xA0 || e.Vk == 0xA1) {
-            bool ctrl = CtrlDown();
-            bool alt = AltDown();
-            if (ctrl || alt) {
-              DebugLog("SHIFT_TOGGLE_IGNORED ctrl=" + ctrl + " alt=" + alt);
-            } else {
-              _shiftArmed = true;
-              _shiftArmValue = !_imeEnglishMode;
-              _englishBeforeArm = _imeEnglishMode;
-              _shiftArmedAt = DateTime.Now;
-              DebugLog("SHIFT_ARM value=" + _shiftArmValue + " english=" + _imeEnglishMode);
-            }
-          }
         } else if (_chkFunc.Checked) {
           if (e.Vk >= 0x70 && e.Vk <= 0x87) _speaker.SpeakEn("F" + (e.Vk - 0x70 + 1).ToString());
           else if (e.Vk == 0x08 || e.Vk == 0x2E) {
@@ -683,7 +701,7 @@ namespace GenDaLangDu {
         return;
       }
 
-      if (chineseMode && e.Vk >= 0x41 && e.Vk <= 0x5A && !ShiftOrCaps() && !_imeEnglishMode &&
+      if (chineseMode && e.Vk >= 0x41 && e.Vk <= 0x5A && !ShiftOrCaps() && !ImeEnglishNow &&
           !(e.Vk == 0x56 && CtrlDown()) && !(e.Vk == 0x2D && ShiftDown())) {
         CheckUiText();
         _composing = true;
@@ -696,15 +714,7 @@ namespace GenDaLangDu {
       if (!string.IsNullOrEmpty(chars)) {
         foreach (char c in chars) {
           if (KeyTranslator.IsLatinLetter(c)) {
-            if (_shiftArmed) {
-              if ((DateTime.Now - _shiftArmedAt).TotalMilliseconds < 3000) {
-                _imeEnglishMode = _shiftArmValue;
-                if (_imeEnglishMode) _composing = false;
-                DebugLog("SHIFT_APPLY english=" + _imeEnglishMode);
-              }
-              _shiftArmed = false;
-            }
-            if ((chineseMode || _composing) && !ShiftOrCaps() && !_imeEnglishMode) {
+            if ((chineseMode || _composing) && !ShiftOrCaps() && !ImeEnglishNow) {
               _composing = true;
               _lastPinyinKeyAt = DateTime.Now;
               _lastTypingCommitKeyAt = DateTime.Now;
@@ -760,6 +770,44 @@ namespace GenDaLangDu {
       ScheduleImeCheck();
     }
 
+    /// <summary>Shift 松开时判定"单次轻按"：按下到松开 &lt;300ms 且中间无其它键，
+    /// 且焦点可输入，才翻转当前程序的中/英记忆状态。</summary>
+    private void HandleKeyUp(KeyHookEventArgs e) {
+      bool isShift = e.Vk == 0x10 || e.Vk == 0xA0 || e.Vk == 0xA1;
+      if (!isShift) return;
+      if (!_shiftTapArmed) return;
+      _shiftTapArmed = false;
+      double heldMs = (DateTime.Now - _shiftDownAt).TotalMilliseconds;
+      if (heldMs >= 300) {
+        DebugLog("SHIFT_TAP_HOLD_IGNORED ms=" + heldMs.ToString("0"));
+        return;
+      }
+      uint pid = _shiftTapPid;
+      if (pid == 0) pid = CurrentForegroundPid();
+      if (pid == 0 || !TextReader.IsFocusEditable()) {
+        DebugLog("SHIFT_TAP_IGNORED no-editable pid=" + pid);
+        return;
+      }
+      bool wasEnglish = _appStates.IsEnglish(pid);
+      bool nowEnglish = !wasEnglish;
+      _appStates.ToggleChinese(pid, !nowEnglish);
+      if (nowEnglish) _composing = false;
+      DebugLog("SHIFT_TAP_TOGGLE pid=" + pid + " english=" + nowEnglish +
+               " app=" + _appStates.GetAppName(pid));
+    }
+
+    private uint CurrentForegroundPid() {
+      try {
+        IntPtr h = Native.GetForegroundWindow();
+        if (h == IntPtr.Zero) return 0;
+        uint pid;
+        Native.GetWindowThreadProcessId(h, out pid);
+        return pid;
+      } catch {
+        return 0;
+      }
+    }
+
     private void ScheduleImeCheck() {
       if (!_listening) return;
       try { BeginInvoke((MethodInvoker)CheckIme); } catch { }
@@ -784,6 +832,7 @@ namespace GenDaLangDu {
             CancelPendingSpace();
             SpeakZh(delta);
             RememberSpoken(delta);
+            MarkChineseCommit();
             DebugLog("IME_RESULT [" + delta + "]");
           }
         }
@@ -887,8 +936,10 @@ namespace GenDaLangDu {
           return;
         }
         /* 已上屏的英文/数字（Shift 或大写锁定切英文后直接上屏） */
+        bool hasLatin = false;
         foreach (char c in text) {
           if (KeyTranslator.IsLatinLetter(c)) {
+            hasLatin = true;
             if (_chkLetters.Checked) {
               _speaker.SpeakEn(KeyTranslator.NormalizeLatin(c).ToString().ToLowerInvariant());
             }
@@ -897,6 +948,11 @@ namespace GenDaLangDu {
               SpeakZh(KeyTranslator.DigitToChinese(c));
             }
           }
+        }
+        /* 自愈：非组字、非临时 Shift/大写锁定状态下英文直接上屏，说明程序确实处于英文模式 */
+        if (hasLatin && !_composing && !ShiftHeld() && !CapsLockOn()) {
+          _appStates.SetEnglishCurrent();
+          DebugLog("STATE_SELFHEAL_ENGLISH [" + text + "]");
         }
         if (text.Length > 0) {
           _lastTsfCommitAt = DateTime.Now;
@@ -978,6 +1034,24 @@ namespace GenDaLangDu {
       }
       _punctKeyPending = false;
       _lastPunctName = null;
+    }
+
+    /// <summary>跟踪前台进程：切换进程时登记状态表（新进程默认中文）。</summary>
+    private void TrackFocus() {
+      if (!_listening) return;
+      if (!_testMode && IsOurProcessForeground()) return;
+      try {
+        IntPtr h = Native.GetForegroundWindow();
+        if (h == IntPtr.Zero) return;
+        uint pid;
+        Native.GetWindowThreadProcessId(h, out pid);
+        if (pid == 0 || pid == (uint)Process.GetCurrentProcess().Id) return;
+        if (pid != _appStates.CurrentPid) {
+          _appStates.SetCurrentPid(pid);
+          DebugLog("FOCUS pid=" + pid + " app=" + _appStates.GetAppName(pid) +
+                   " english=" + _appStates.IsEnglish(pid));
+        }
+      } catch { }
     }
 
     private void CheckUiText() {
@@ -1321,15 +1395,32 @@ namespace GenDaLangDu {
     }
 
     private void MarkChineseCommitIfCjk(string text) {
-      if (HasCjk(text) && !_imeEnglishMode) MarkChineseCommit();
+      if (HasCjk(text) && !ImeEnglishNow) MarkChineseCommit();
     }
 
     private void MarkChineseCommit() {
       CancelPendingSpace();
       CancelPendingKeySound();
-      _imeEnglishMode = false;
+      _appStates.SetChineseCurrent();
       _lastChineseCommitAt = DateTime.Now;
       _lastZhCommitAt = DateTime.Now;
+    }
+
+    /// <summary>当前是否处于"直接上屏英文"状态：大写锁定开着=英文；
+    /// 否则按程序记忆的中/英状态（单次轻按 Shift 翻转，中文上屏自愈为中文）。</summary>
+    private bool ImeEnglishNow {
+      get {
+        if (CapsLockOn()) return true;
+        return _appStates.IsEnglishCurrent();
+      }
+    }
+
+    private static bool CapsLockOn() {
+      try {
+        return (Native.GetKeyState(0x14) & 1) != 0;
+      } catch {
+        return false;
+      }
     }
 
     private void FlushPendingSpace() {
@@ -1776,7 +1867,11 @@ namespace GenDaLangDu {
     protected override void OnLoad(EventArgs e) {
       base.OnLoad(e);
       _hook.KeyEvent += OnKeyBridge;
-      _mouseHook.LeftButtonDown += delegate { _lastMouseDownAt = DateTime.Now; };
+      _mouseHook.LeftButtonDown += delegate {
+        _lastMouseDownAt = DateTime.Now;
+        /* 按住 Shift 点选文字时，松开不视为中英切换 */
+        _shiftTapArmed = false;
+      };
       TsfHook.CommitReceived += OnTsfCommit;
       TsfHook.Init();
       if (!TsfHook.IsActive && TsfHook.LastError.Length > 0) {

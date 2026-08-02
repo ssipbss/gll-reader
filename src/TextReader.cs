@@ -57,6 +57,32 @@ namespace GenDaLangDu {
       }
     }
 
+    /// <summary>判断焦点元素是否可输入（有文本/值控件模式）。仅在轻按 Shift 时调用一次，
+    /// 用于防止在游戏、桌面等没有输入光标的地方误翻转中英状态。</summary>
+    public static bool IsFocusEditable() {
+      try {
+        AutomationElement el = AutomationElement.FocusedElement;
+        if (el == null) return false;
+        AutomationElement cur = el;
+        for (int i = 0; i < 12; i++) {
+          if (cur == null) break;
+          try {
+            object p;
+            if (cur.TryGetCurrentPattern(TextPattern.Pattern, out p)) return true;
+            if (cur.TryGetCurrentPattern(ValuePattern.Pattern, out p)) return true;
+          } catch { }
+          try {
+            cur = TreeWalker.ControlViewWalker.GetParent(cur);
+          } catch {
+            break;
+          }
+        }
+        return false;
+      } catch {
+        return false;
+      }
+    }
+
     internal static bool IsTsfCoveredForeground() {
       try {
         IntPtr h = Native.GetForegroundWindow();
