@@ -51,6 +51,13 @@ namespace GenDaLangDu {
     private DateTime _lastDeleteAt = DateTime.MinValue;
     private DateTime _lastZhCommitAt = DateTime.MinValue;
     private DateTime _lastTsfCommitAt = DateTime.MinValue;
+    private string _lastDiffCommitText = null;
+    private DateTime _lastDiffCommitAt = DateTime.MinValue;
+    private DateTime _lastTypingCommitKeyAt = DateTime.MinValue;
+    private DateTime _lastCtrlDownAt = DateTime.MinValue;
+    private DateTime _lastAltDownAt = DateTime.MinValue;
+    private DateTime _lastWinDownAt = DateTime.MinValue;
+    private DateTime _lastShiftDownAt = DateTime.MinValue;
     private DateTime _pendingSpaceAt = DateTime.MinValue;
     private System.Windows.Forms.Timer _spaceTimer;
     private string _pendingModName = null;
@@ -530,13 +537,13 @@ namespace GenDaLangDu {
       _lastKeyAt = DateTime.Now;
       DebugLog("KEY vk=0x" + e.Vk.ToString("X") + " scan=0x" + e.Scan.ToString("X"));
       /* 粘贴标记：Ctrl+V / Shift+Insert，用于差异通道的因果校验 */
-      if ((e.Vk == 0x56 && CtrlDown()) || (e.Vk == 0x2D && ShiftDown())) {
+      if ((e.Vk == 0x56 && CtrlHeld()) || (e.Vk == 0x2D && ShiftHeld())) {
         _lastPasteAt = DateTime.Now;
         DebugLog("PASTE_KEY vk=0x" + e.Vk.ToString("X"));
       }
       /* 快捷键组合播报：Ctrl/Alt/Win 按住时再按其它键，整组念（Control C / Alt Tab） */
       if (_chkModifiers.Checked && _pendingModName != null && !IsModifierKey(e.Vk) &&
-          (CtrlDown() || AltDown() || WinDown())) {
+          (CtrlHeld() || AltHeld() || WinHeld())) {
         string chord = BuildChord(e);
         if (chord != null) {
           CancelPendingMod();
@@ -565,6 +572,7 @@ namespace GenDaLangDu {
 
       if (chineseMode) {
         if (e.Vk == 0x20) {
+          _lastTypingCommitKeyAt = DateTime.Now;
           if (_composing) {
             CheckUiText();
             if (_composing) {
@@ -586,6 +594,7 @@ namespace GenDaLangDu {
           return;
         } else if (_composing && IsCandidateControl(e.Vk)) {
           _lastPinyinKeyAt = DateTime.Now;
+          _lastTypingCommitKeyAt = DateTime.Now;
           _lastPunctName = null;
           _punctKeyPending = true;
           _lastPunctKeyAt = DateTime.Now;
@@ -598,16 +607,23 @@ namespace GenDaLangDu {
           ScheduleImeCheck();
           return;
         }
-        if (e.Vk == 0x0D || e.Vk == 0x1B) _composing = false;
+        if (e.Vk == 0x0D || e.Vk == 0x1B) {
+          _composing = false;
+          if (e.Vk == 0x0D) _lastTypingCommitKeyAt = DateTime.Now;
+        }
       }
 
       string keyName = KeyTranslator.GetKeyName(e.Vk);
       if (keyName != null) {
         if (IsModifierKey(e.Vk)) {
+          if (e.Vk == 0x11 || e.Vk == 0xA2 || e.Vk == 0xA3) _lastCtrlDownAt = DateTime.Now;
+          else if (e.Vk == 0x12 || e.Vk == 0xA4 || e.Vk == 0xA5) _lastAltDownAt = DateTime.Now;
+          else if (e.Vk == 0x5B || e.Vk == 0x5C) _lastWinDownAt = DateTime.Now;
+          else if (e.Vk == 0x10 || e.Vk == 0xA0 || e.Vk == 0xA1) _lastShiftDownAt = DateTime.Now;
           if (_chkModifiers.Checked) {
             if (e.Vk == 0x10 || e.Vk == 0xA0 || e.Vk == 0xA1) {
               /* Shift 单独按（切换中英文）立即播报；与 Ctrl/Alt/Win 组合时不单独念，随组合念 */
-              if (_pendingModName == null && !CtrlDown() && !AltDown() && !WinDown()) {
+              if (_pendingModName == null && !CtrlHeld() && !AltHeld() && !WinHeld()) {
                 _speaker.SpeakEnWord("Shift");
               }
             } else {
@@ -672,6 +688,7 @@ namespace GenDaLangDu {
         CheckUiText();
         _composing = true;
         _lastPinyinKeyAt = DateTime.Now;
+        _lastTypingCommitKeyAt = DateTime.Now;
       }
 
       string chars = KeyTranslator.GetChars(e.Vk, e.Scan);
@@ -690,6 +707,7 @@ namespace GenDaLangDu {
             if ((chineseMode || _composing) && !ShiftOrCaps() && !_imeEnglishMode) {
               _composing = true;
               _lastPinyinKeyAt = DateTime.Now;
+              _lastTypingCommitKeyAt = DateTime.Now;
             } else if (_chkLetters.Checked) {
               char lc = char.ToLowerInvariant(KeyTranslator.NormalizeLatin(c));
               _speaker.SpeakEn(lc.ToString());
@@ -709,7 +727,9 @@ namespace GenDaLangDu {
             _composing = false;
             MarkChineseCommit();
             _lastPacketCjkAt = DateTime.Now;
-            if (!(TsfHook.IsActive && TextReader.IsTsfCoveredForeground())) {
+            bool diffAlreadySpoke = c.ToString() == _lastDiffCommitText &&
+                                    (DateTime.Now - _lastDiffCommitAt).TotalMilliseconds < 600;
+            if (!diffAlreadySpoke && !(TsfHook.IsActive && TextReader.IsTsfCoveredForeground())) {
               SpeakZh(c.ToString());
               RememberSpoken(c.ToString());
             }
@@ -753,7 +773,10 @@ namespace GenDaLangDu {
           if (_lastResult.Length == 0 || r.StartsWith(_lastResult)) delta = r.Substring(_lastResult.Length);
           else delta = r;
           _lastResult = r;
-          if (!string.IsNullOrEmpty(delta) && !RecentlySpoken(delta)) {
+          bool diffAlreadySpoke = delta == _lastDiffCommitText &&
+                                  (DateTime.Now - _lastDiffCommitAt).TotalMilliseconds < 600;
+          bool recentTyping = (DateTime.Now - _lastTypingCommitKeyAt).TotalMilliseconds < 1000;
+          if (!string.IsNullOrEmpty(delta) && recentTyping && !diffAlreadySpoke && !RecentlySpoken(delta)) {
             CancelPendingSpace();
             SpeakZh(delta);
             RememberSpoken(delta);
@@ -814,13 +837,17 @@ namespace GenDaLangDu {
       _composing = false;
       SpeakZh(spk);
       RememberSpoken(spk);
+      _lastDiffCommitText = spk;
+      _lastDiffCommitAt = DateTime.Now;
       MarkChineseCommit();
       DebugLog("UI_INSERT [" + ins + "]");
       return true;
     }
 
     private bool HasTypingSignature() {
-      bool typed = (DateTime.Now - _lastPinyinKeyAt).TotalMilliseconds < 2000;
+      /* 必须有最近的字词输入痕迹（字母/上屏键在1秒内），粘贴等程序性插入无此痕迹 */
+      bool typed = (DateTime.Now - _lastPinyinKeyAt).TotalMilliseconds < 2000 &&
+                   (DateTime.Now - _lastTypingCommitKeyAt).TotalMilliseconds < 1000;
       bool pasted = _lastPasteAt > _lastPinyinKeyAt &&
                     (DateTime.Now - _lastPasteAt).TotalMilliseconds < 2000;
       return typed && !pasted;
@@ -836,6 +863,16 @@ namespace GenDaLangDu {
         if (hasCjk) {
           string spk = PunctSpokenForm(FilterForSpeech(text));
           if (string.IsNullOrEmpty(spk)) return;
+          if ((DateTime.Now - _lastTypingCommitKeyAt).TotalMilliseconds > 1000) {
+            DebugLog("TSF_NOTYPING_SKIP [" + spk + "]");
+            return;
+          }
+          bool diffAlreadySpoke = spk == _lastDiffCommitText &&
+                                  (DateTime.Now - _lastDiffCommitAt).TotalMilliseconds < 600;
+          if (diffAlreadySpoke) {
+            DebugLog("TSF_DUP_SKIP [" + spk + "]");
+            return;
+          }
           if (RecentlySpoken(spk)) return;
           _composing = false;
           SpeakZh(spk);
@@ -1349,6 +1386,24 @@ namespace GenDaLangDu {
       return false;
     }
 
+    /* 钩子处理可能滞后于按键释放：300ms内观察到的修饰键按下也算"按住"，
+       避免 Ctrl+V 等快键在钩子处理时修饰键已抬起而漏判 */
+    private bool CtrlHeld() {
+      return CtrlDown() || (DateTime.Now - _lastCtrlDownAt).TotalMilliseconds < 300;
+    }
+
+    private bool AltHeld() {
+      return AltDown() || (DateTime.Now - _lastAltDownAt).TotalMilliseconds < 300;
+    }
+
+    private bool WinHeld() {
+      return WinDown() || (DateTime.Now - _lastWinDownAt).TotalMilliseconds < 300;
+    }
+
+    private bool ShiftHeld() {
+      return ShiftDown() || (DateTime.Now - _lastShiftDownAt).TotalMilliseconds < 300;
+    }
+
     private static bool IsKeyDown(uint vk) {
       try {
         return (Native.GetAsyncKeyState((int)vk) & 0x8000) != 0;
@@ -1390,10 +1445,10 @@ namespace GenDaLangDu {
 
     private string BuildChord(KeyHookEventArgs e) {
       System.Collections.Generic.List<string> parts = new System.Collections.Generic.List<string>();
-      if (CtrlDown()) parts.Add("Control");
-      if (ShiftDown()) parts.Add("Shift");
-      if (AltDown()) parts.Add("Alt");
-      if (WinDown()) parts.Add("Windows");
+      if (CtrlHeld()) parts.Add("Control");
+      if (ShiftHeld()) parts.Add("Shift");
+      if (AltHeld()) parts.Add("Alt");
+      if (WinHeld()) parts.Add("Windows");
       string key = ChordKeyName(e);
       if (key == null) return null;
       parts.Add(key);
@@ -1406,10 +1461,10 @@ namespace GenDaLangDu {
       string key = ChordKeyName(e);
       if (key == null || key.Length != 1 || key[0] < 'A' || key[0] > 'Z') return null;
       System.Collections.Generic.List<string> parts = new System.Collections.Generic.List<string>();
-      if (CtrlDown()) parts.Add("Control");
-      if (ShiftDown()) parts.Add("Shift");
-      if (AltDown()) parts.Add("Alt");
-      if (WinDown()) parts.Add("Windows");
+      if (CtrlHeld()) parts.Add("Control");
+      if (ShiftHeld()) parts.Add("Shift");
+      if (AltHeld()) parts.Add("Alt");
+      if (WinHeld()) parts.Add("Windows");
       parts.Add("<say-as interpret-as=\"characters\">" + key + "</say-as>");
       return string.Join(" ", parts.ToArray());
     }
