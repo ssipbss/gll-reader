@@ -56,6 +56,8 @@ namespace GenDaLangDu {
     private string _pendingModName = null;
     private uint _pendingModVk = 0;
     private System.Windows.Forms.Timer _modTimer;
+    private System.Media.SoundPlayer _toneDingPlayer;
+    private System.Media.SoundPlayer _toneDangPlayer;
     private DateTime _lastPacketCjkAt = DateTime.MinValue;
     private bool _selfElevated;
     private DateTime _lastElevationAskAt = DateTime.MinValue;
@@ -635,23 +637,23 @@ namespace GenDaLangDu {
           if (e.Vk >= 0x70 && e.Vk <= 0x87) _speaker.SpeakEn("F" + (e.Vk - 0x70 + 1).ToString());
           else if (e.Vk == 0x08 || e.Vk == 0x2E) {
             _lastDeleteAt = DateTime.Now;
-            if ((DateTime.Now - _lastDeleteSpeakAt).TotalMilliseconds < 800) {
-            DebugLog("DELETE_COALESCE vk=0x" + e.Vk.ToString("X"));
+            if (e.Vk == 0x08) {
+              /* 退格键：提示音"叮"，每次按键都响（快速连按退格有节奏反馈） */
+              PlayDing();
+            } else if ((DateTime.Now - _lastDeleteSpeakAt).TotalMilliseconds < 800) {
+              DebugLog("DELETE_COALESCE vk=0x" + e.Vk.ToString("X"));
             } else {
               _lastDeleteSpeakAt = DateTime.Now;
               string en = KeyTranslator.GetKeyNameEn(e.Vk);
               _speaker.SpeakEnWord(en != null ? en : keyName);
             }
           } else if (e.Vk == 0x20) {
-            /* 空格可能是中文上屏键：延迟350ms，若随后有中文提交则取消，避免把上屏空格当功能键读 */
-            _pendingSpaceAt = DateTime.Now;
-            if (_spaceTimer == null) {
-              _spaceTimer = new System.Windows.Forms.Timer();
-              _spaceTimer.Interval = 350;
-              _spaceTimer.Tick += delegate { FlushPendingSpace(); };
+            /* 空格键：提示音"当"。若80ms内刚有中文提交（竞态），说明是上屏键，不响 */
+            bool commitRace = _lastZhCommitAt != DateTime.MinValue &&
+                              (DateTime.Now - _lastZhCommitAt).TotalMilliseconds < 80;
+            if (!commitRace) {
+              PlayDang();
             }
-            _spaceTimer.Stop();
-            _spaceTimer.Start();
           } else {
             string en = KeyTranslator.GetKeyNameEn(e.Vk);
             _speaker.SpeakEnWord(en != null ? en : keyName);
@@ -1380,6 +1382,61 @@ namespace GenDaLangDu {
       _pendingModName = null;
       _pendingModVk = 0;
       if (_modTimer != null) _modTimer.Stop();
+    }
+
+    private void PlayDing() {
+      try {
+        if (_toneDingPlayer == null) {
+          _toneDingPlayer = new System.Media.SoundPlayer(CreateToneStream(1318.0, 0.12, 22.0));
+          _toneDingPlayer.Load();
+        }
+        _toneDingPlayer.Play();
+        DebugLog("TONE_DING");
+      } catch { }
+    }
+
+    private void PlayDang() {
+      try {
+        if (_toneDangPlayer == null) {
+          _toneDangPlayer = new System.Media.SoundPlayer(CreateToneStream(784.0, 0.18, 12.0));
+          _toneDangPlayer.Load();
+        }
+        _toneDangPlayer.Play();
+        DebugLog("TONE_DANG");
+      } catch { }
+    }
+
+    /// <summary>生成短提示音 WAV：freq 频率、seconds 时长、decay 衰减速度（叮=高频快衰减，当=低频慢衰减）</summary>
+    private static System.IO.Stream CreateToneStream(double freq, double seconds, double decay) {
+      int sampleRate = 22050;
+      int n = (int)(sampleRate * seconds);
+      byte[] buf;
+      using (System.IO.MemoryStream ms = new System.IO.MemoryStream()) {
+        using (System.IO.BinaryWriter bw = new System.IO.BinaryWriter(ms, System.Text.Encoding.ASCII, true)) {
+          int dataSize = n * 2;
+          bw.Write(System.Text.Encoding.ASCII.GetBytes("RIFF"));
+          bw.Write(36 + dataSize);
+          bw.Write(System.Text.Encoding.ASCII.GetBytes("WAVE"));
+          bw.Write(System.Text.Encoding.ASCII.GetBytes("fmt "));
+          bw.Write(16);
+          bw.Write((short)1);
+          bw.Write((short)1);
+          bw.Write(sampleRate);
+          bw.Write(sampleRate * 2);
+          bw.Write((short)2);
+          bw.Write((short)16);
+          bw.Write(System.Text.Encoding.ASCII.GetBytes("data"));
+          bw.Write(dataSize);
+          for (int i = 0; i < n; i++) {
+            double t = (double)i / sampleRate;
+            double env = Math.Exp(-t * decay);
+            double v = Math.Sin(2 * Math.PI * freq * t) * env * 0.55;
+            bw.Write((short)(v * short.MaxValue));
+          }
+        }
+        buf = ms.ToArray();
+      }
+      return new System.IO.MemoryStream(buf, false);
     }
 
     private string BuildChord(KeyHookEventArgs e) {
