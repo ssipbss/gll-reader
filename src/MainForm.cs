@@ -710,6 +710,10 @@ namespace GenDaLangDu {
               _lastTypingCommitKeyAt = DateTime.Now;
             } else if (_chkLetters.Checked) {
               char lc = char.ToLowerInvariant(KeyTranslator.NormalizeLatin(c));
+              /* 英文模式读字母时也记录打字痕迹：若随后实际有中文上屏（Shift误判），
+                 上屏内容仍能通过校验被朗读，并触发英文状态自愈复位 */
+              _lastPinyinKeyAt = DateTime.Now;
+              _lastTypingCommitKeyAt = DateTime.Now;
               _speaker.SpeakEn(lc.ToString());
             }
             continue;
@@ -1322,6 +1326,7 @@ namespace GenDaLangDu {
 
     private void MarkChineseCommit() {
       CancelPendingSpace();
+      CancelPendingKeySound();
       _imeEnglishMode = false;
       _lastChineseCommitAt = DateTime.Now;
       _lastZhCommitAt = DateTime.Now;
@@ -1474,11 +1479,15 @@ namespace GenDaLangDu {
       if (_speaker.IsBusy) return;
       string path = _pendingKeySoundPath;
       _pendingKeySoundPath = null;
-      if ((DateTime.Now - _pendingKeySoundAt).TotalMilliseconds > 1500) {
+      if ((DateTime.Now - _pendingKeySoundAt).TotalMilliseconds > 3000) {
         DebugLog("KEY_SOUND_STALE_DROP");
         return;
       }
       PlayKeySound(path);
+    }
+
+    private void CancelPendingKeySound() {
+      _pendingKeySoundPath = null;
     }
 
     private string BuildChord(KeyHookEventArgs e) {
