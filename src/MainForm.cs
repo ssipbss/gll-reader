@@ -60,7 +60,7 @@ namespace GenDaLangDu {
       new System.Collections.Generic.Dictionary<string, System.Media.SoundPlayer>();
     private const string EnterSoundPath = @"C:\Windows\Media\Windows Notify System Generic.wav";
     private const string BackspaceSoundPath = @"C:\Windows\Media\Windows Ding.wav";
-    private const string SpaceSoundPath = @"C:\Windows\Media\Windows Startup.wav";
+    private const string SpaceSoundPath = @"C:\Windows\Media\Windows Critical Stop.wav";
     private DateTime _lastPacketCjkAt = DateTime.MinValue;
     private bool _selfElevated;
     private DateTime _lastElevationAskAt = DateTime.MinValue;
