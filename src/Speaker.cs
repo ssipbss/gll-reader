@@ -235,7 +235,10 @@ namespace GenDaLangDu {
       enSsmls.Clear();
     }
 
-    private static System.Media.SoundPlayer _currentPlayer;
+    private static volatile bool _stopRequested;
+
+    [DllImport("winmm.dll", CharSet = CharSet.Unicode)]
+    private static extern uint mciSendString(string command, System.Text.StringBuilder returnString, int returnLength, IntPtr hwndCallback);
 
     private int _lastRateZh = int.MinValue;
     private int _lastVolumeZh = int.MinValue;
@@ -268,10 +271,7 @@ namespace GenDaLangDu {
       }
       try {
         string playPath = TrimWavSilence(wav);
-        using (System.Media.SoundPlayer p = new System.Media.SoundPlayer(playPath)) {
-          p.PlaySync();
-          _currentPlayer = null;
-        }
+        PlayWavBlocking(playPath);
       } catch (Exception ex) {
         if (Log != null) Log(tag + "_ERR:" + ex.Message);
       }
@@ -310,16 +310,41 @@ namespace GenDaLangDu {
             }
           }
           string playPath = TrimWavSilence(wav);
-          using (System.Media.SoundPlayer p = new System.Media.SoundPlayer(playPath)) {
-            p.PlaySync();
-            _currentPlayer = null;
-          }
+          PlayWavBlocking(playPath);
         } catch (Exception ex) {
           if (Log != null) Log(tag + "_ERR:" + ex.Message);
         }
       } catch (Exception ex) {
         if (Log != null) Log(tag + "_ERR:" + ex.Message);
       }
+    }
+
+    /// <summary>用 mciSendString 播放 WAV：可被其它线程立即停止（SoundPlayer.Stop 跨线程无效）。</summary>
+    private static void PlayWavBlocking(string path) {
+      const string alias = "gll_snd";
+      try {
+        /* 停止请求后到达的音频直接丢弃，不再出声（合成无法中断，但可以不放出来） */
+        if (_stopRequested) {
+          _stopRequested = false;
+          return;
+        }
+        mciSendString("close " + alias, null, 0, IntPtr.Zero);
+        mciSendString("open \"" + path + "\" type waveaudio alias " + alias, null, 0, IntPtr.Zero);
+        mciSendString("play " + alias, null, 0, IntPtr.Zero);
+        _stopRequested = false;
+        while (true) {
+          if (_stopRequested) {
+            mciSendString("stop " + alias, null, 0, IntPtr.Zero);
+            break;
+          }
+          System.Text.StringBuilder sb = new System.Text.StringBuilder(64);
+          mciSendString("status " + alias + " mode", sb, 64, IntPtr.Zero);
+          string mode = sb.ToString();
+          if (!mode.StartsWith("playing", StringComparison.OrdinalIgnoreCase)) break;
+          Thread.Sleep(50);
+        }
+        mciSendString("close " + alias, null, 0, IntPtr.Zero);
+      } catch { }
     }
 
     private static bool IsNaturalName(string desc) {
@@ -429,7 +454,10 @@ namespace GenDaLangDu {
     private static void Diag(string msg) { }
 
     private static void Cancel(dynamic voice) {
-      try { if (_currentPlayer != null) _currentPlayer.Stop(); } catch { }
+      try {
+        _stopRequested = true;
+        mciSendString("stop gll_snd", null, 0, IntPtr.Zero);
+      } catch { }
       try { if (voice != null) voice.Speak("", 2); } catch { }
       try { if (_rtCancel != null) _rtCancel.Cancel(); } catch { }
     }
@@ -589,6 +617,7 @@ namespace GenDaLangDu {
 
     public void SpeakZh(string text) {
       if (string.IsNullOrEmpty(text)) return;
+      _stopRequested = false;
       if (Log != null) Log("ZH:" + text);
       _prevEnqueueAt = _lastEnqueueAt;
       _lastEnqueueAt = DateTime.Now;
@@ -597,6 +626,7 @@ namespace GenDaLangDu {
 
     public void SpeakEn(string text) {
       if (string.IsNullOrEmpty(text)) return;
+      _stopRequested = false;
       if (Log != null) Log("EN:" + text);
       _prevEnqueueAt = _lastEnqueueAt;
       _lastEnqueueAt = DateTime.Now;
@@ -605,6 +635,7 @@ namespace GenDaLangDu {
 
     public void SpeakEnWord(string text) {
       if (string.IsNullOrEmpty(text)) return;
+      _stopRequested = false;
       if (Log != null) Log("ENW:" + text);
       _prevEnqueueAt = _lastEnqueueAt;
       _lastEnqueueAt = DateTime.Now;
@@ -616,6 +647,7 @@ namespace GenDaLangDu {
         SpeakEnWord(plain);
         return;
       }
+      _stopRequested = false;
       if (Log != null) Log("ENW:" + plain + " SSML=1");
       _prevEnqueueAt = _lastEnqueueAt;
       _lastEnqueueAt = DateTime.Now;
@@ -626,7 +658,14 @@ namespace GenDaLangDu {
     public void FlushAll() { }
 
     public void Stop() {
-      try { _queue.Add(new WorkItem { Kind = ItemKind.Cancel }); } catch { }
+      try {
+        /* 立即打断正在播放的音频（播放线程正阻塞在 PlaySync，队列命令无法处理） */
+        _stopRequested = true;
+        mciSendString("stop gll_snd", null, 0, IntPtr.Zero);
+        WorkItem tmp;
+        while (_queue.TryTake(out tmp)) { }
+        _queue.Add(new WorkItem { Kind = ItemKind.Cancel });
+      } catch { }
     }
 
     public void Dispose() {

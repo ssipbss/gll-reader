@@ -12,6 +12,7 @@ New-Item -ItemType Directory -Force -Path $finalOut | Out-Null
 $gac = [string](Get-ChildItem 'C:\Windows\Microsoft.NET\assembly\GAC_MSIL\System.Speech' -Recurse -Filter 'System.Speech.dll' | Select-Object -First 1 -ExpandProperty FullName)
 $uia1 = [string](Get-ChildItem 'C:\Windows\Microsoft.NET\assembly\GAC_MSIL\UIAutomationClient' -Recurse -Filter 'UIAutomationClient.dll' | Select-Object -First 1 -ExpandProperty FullName)
 $uia2 = [string](Get-ChildItem 'C:\Windows\Microsoft.NET\assembly\GAC_MSIL\UIAutomationTypes' -Recurse -Filter 'UIAutomationTypes.dll' | Select-Object -First 1 -ExpandProperty FullName)
+$winbase = [string](Get-ChildItem 'C:\Windows\Microsoft.NET\assembly\GAC_MSIL\WindowsBase' -Recurse -Filter 'WindowsBase.dll' | Select-Object -First 1 -ExpandProperty FullName)
 if (-not $gac) { throw '找不到 System.Speech.dll' }
 
 $csc = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
@@ -31,6 +32,7 @@ $mainLines.Add('/r:System.Drawing.dll')
 $mainLines.Add('/r:System.Xml.dll')
 $mainLines.Add('/r:' + $uia1)
 $mainLines.Add('/r:' + $uia2)
+$mainLines.Add('/r:' + $winbase)
 $mainLines.Add('/r:' + $gac)
 $winrtDir = Join-Path $root 'tools\winrt'
 $mainLines.Add('/r:System.Runtime.dll')

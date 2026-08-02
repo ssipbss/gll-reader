@@ -10,6 +10,7 @@ namespace GenDaLangDu {
     public bool IsUp;
     public bool IsSysKey;
     public bool IsAutoRepeat;
+    public bool IsInjected;
   }
 
   public sealed class KeyboardHook : IDisposable {
@@ -100,6 +101,7 @@ namespace GenDaLangDu {
             KeyHookEventArgs args = new KeyHookEventArgs();
             args.Vk = kbd.vkCode;
             args.Scan = kbd.scanCode;
+            args.IsInjected = (kbd.flags & Native.LLKHF_INJECTED) != 0;
             args.IsUp = (kbd.flags & Native.LLKHF_UP) != 0;
             args.IsSysKey = (msg == Native.WM_SYSKEYDOWN || msg == Native.WM_SYSKEYUP);
             if (!args.IsUp) {

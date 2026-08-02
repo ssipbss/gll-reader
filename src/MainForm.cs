@@ -5,6 +5,8 @@ using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
 using System.Xml.Serialization;
+using System.Windows.Automation;
+using System.Windows.Automation.Text;
 
 namespace GenDaLangDu {
   public class MainForm : Form {
@@ -26,6 +28,11 @@ namespace GenDaLangDu {
     private bool _testMode;
     private string _testLog = null;
     private int _exitMs = 6000;
+    private string _autoTextPath = null;
+    private string _autoText = null;
+    private int _autoIndex;
+    private int _autoSpoken;
+    private System.Windows.Forms.Timer _autoTimer;
     private string _lastResult = "";
     private string _lastUiText = null;
     private string _lastUiElement = null;
@@ -44,6 +51,13 @@ namespace GenDaLangDu {
     private IntPtr _lastChineseCommitHwnd = IntPtr.Zero;
     private bool _composing;
     private DateTime _lastMouseDownAt = DateTime.MinValue;
+    private DateTime _lastMouseUpAt = DateTime.MinValue;
+    private Native.POINT _mouseDownPos;
+    private Native.POINT _mouseUpPos;
+    private DateTime _lastDragSelectAt = DateTime.MinValue;
+    private DateTime _lastClickAt = DateTime.MinValue;
+    private DateTime _lastSpeakRequestAt = DateTime.MinValue;
+    private DateTime _lastButtonToggleAt = DateTime.MinValue;
     private DateTime _lastKeyAt = DateTime.MinValue;
     private DateTime _lastSpokenAt = DateTime.MinValue;
     private DateTime _lastDeleteSpeakAt = DateTime.MinValue;
@@ -77,6 +91,7 @@ namespace GenDaLangDu {
     private DateTime _shiftDownAt = DateTime.MinValue;
     private bool _shiftTapArmed;
     private uint _shiftTapPid;
+    private bool _shiftSpeakPending;
     private EnPassTracker _enPassTracker = new EnPassTracker();
     private bool _lastImcChinese = true;
     private readonly System.Text.StringBuilder _packetZhBuffer = new System.Text.StringBuilder();
@@ -101,12 +116,19 @@ namespace GenDaLangDu {
     private CheckBox _chkModifiers;
     private CheckBox _chkDebug;
     private CheckBox _chkClickSpeak;
+    private SelectionFloater _selectionFloater;
+    private DateTime _lastSelectionCheckAt = DateTime.MinValue;
+    private AutomationFocusChangedEventHandler _selectionFocusHandler;
+    private AutomationEventHandler _selectionChangedHandler;
+    private AutomationElement _selectionSubscribedElement;
 
     public MainForm(string[] args) {
       _loading = true;
       ParseArgs(args);
       _enPassTracker.Confirmed += OnEnPassConfirmed;
       _enPassTracker.Log = DebugLog;
+      _selectionFloater = new SelectionFloater();
+      _selectionFloater.SpeakRequested += OnSelectionSpeakRequested;
       try {
         _speaker = new Speaker();
         LogTest("SPEAKER_OK");
@@ -132,7 +154,7 @@ namespace GenDaLangDu {
 
       _uiTimer = new System.Windows.Forms.Timer();
       _uiTimer.Interval = 100;
-      _uiTimer.Tick += delegate { TrackFocus(); _enPassTracker.Check(); CheckUiText(); };
+      _uiTimer.Tick += delegate { TrackFocus(); _enPassTracker.Check(); CheckUiText(); CheckSelectionDone(); UpdateSelectionButton(); };
 
       _selfElevated = SelfElevated();
       _elevTimer = new System.Windows.Forms.Timer();
@@ -157,9 +179,23 @@ namespace GenDaLangDu {
         ShowInTaskbar = false;
         Enabled = false;
         StartListening();
-        _injectTimer = new System.Windows.Forms.Timer();
-        _injectTimer.Interval = 2500;
-        _injectTimer.Tick += delegate {
+        if (!string.IsNullOrEmpty(_autoTextPath) && System.IO.File.Exists(_autoTextPath)) {
+          try {
+            _autoText = System.IO.File.ReadAllText(_autoTextPath, System.Text.Encoding.UTF8);
+          } catch {
+            _autoText = "";
+          }
+          _autoIndex = 0;
+          _autoSpoken = 0;
+          _autoTimer = new System.Windows.Forms.Timer();
+          _autoTimer.Interval = 400; /* 约150字/分钟 */
+          _autoTimer.Tick += delegate { AutoTextTick(); };
+          _autoTimer.Start();
+          _exitMs = Math.Max(_exitMs, 5000 + (_autoText == null ? 0 : _autoText.Length) * 400 + 15000);
+        } else {
+          _injectTimer = new System.Windows.Forms.Timer();
+          _injectTimer.Interval = 2500;
+          _injectTimer.Tick += delegate {
           _injectTimer.Stop();
           SimulateKey(0x41);
           SimulateKey(0x42);
@@ -197,9 +233,12 @@ namespace GenDaLangDu {
           /* VK_PACKET 逐字投递汉字：应合并成"什么"一次朗读 */
           SimulatePacket('什');
           SimulatePacket('么');
+          /* 中文状态反斜杠键：应念顿号，不念反斜杠 */
+          SimulateKey(0xDC);
           LogTest("SIMULATE_DONE");
-        };
-        _injectTimer.Start();
+          };
+          _injectTimer.Start();
+        }
         _autoExitTimer = new System.Windows.Forms.Timer();
         _autoExitTimer.Interval = _exitMs;
         _autoExitTimer.Tick += delegate { _closingByTrayExit = true; Close(); };
@@ -245,6 +284,43 @@ namespace GenDaLangDu {
       OnKey(this, new KeyHookEventArgs { Vk = 0xE7, Scan = (uint)c, IsUp = false, IsSysKey = false });
     }
 
+    /// <summary>自动打字测试：按约150字/分钟节奏模拟五笔码+空格上屏+汉字投递。</summary>
+    private void AutoTextTick() {
+      if (_autoText == null || _autoIndex >= _autoText.Length) {
+        if (_autoTimer != null) _autoTimer.Stop();
+        LogTest("AUTO_TEXT_DONE total=" + (_autoText == null ? 0 : _autoText.Length) +
+                " hanzi=" + CountHanzi(_autoText) + " spoken=" + _autoSpoken);
+        return;
+      }
+      char c = _autoText[_autoIndex++];
+      if (char.IsWhiteSpace(c)) return;
+      string pn = KeyTranslator.PunctName(c);
+      if (pn != null) {
+        SimulatePacket(c);
+        return;
+      }
+      if (!KeyTranslator.IsCjk(c)) {
+        SimulatePacket(c);
+        return;
+      }
+      /* 模拟五笔码（2-4个字母）+ 空格上屏 + 汉字投递 */
+      int codeLen = 2 + (_autoIndex % 3);
+      for (int i = 0; i < codeLen; i++) {
+        SimulateKey((uint)('A' + ((i + _autoIndex) % 26)));
+      }
+      SimulateKey(0x20);
+      SimulatePacket(c);
+    }
+
+    private static int CountHanzi(string s) {
+      if (string.IsNullOrEmpty(s)) return 0;
+      int n = 0;
+      foreach (char c in s) {
+        if (KeyTranslator.IsCjk(c)) n++;
+      }
+      return n;
+    }
+
     private void ParseArgs(string[] args) {
       for (int i = 0; i < args.Length; i++) {
         if (args[i] == "--test" && i + 1 < args.Length) {
@@ -253,6 +329,9 @@ namespace GenDaLangDu {
           i++;
         } else if (args[i] == "--debuglog") {
           _forceDebug = true;
+        } else if (args[i] == "--auto-text" && i + 1 < args.Length) {
+          _autoTextPath = System.IO.Path.GetFullPath(args[i + 1]);
+          i++;
         } else if (args[i] == "--exit-ms" && i + 1 < args.Length) {
           int v;
           if (int.TryParse(args[i + 1], out v)) _exitMs = v;
@@ -420,13 +499,14 @@ namespace GenDaLangDu {
       _chkPunct = MakeCheck("朗读标点符号", new Point(20, 104));
       _chkFunc = MakeCheck("朗读功能键", new Point(20, 134));
       _chkModifiers = MakeCheck("朗读修饰键", new Point(252, 44));
-      _chkClickSpeak = MakeCheck("点击文字时朗读", new Point(252, 74));
+      _chkClickSpeak = MakeCheck("选中文字时朗读", new Point(252, 74));
       _chkClickSpeak.Checked = false;
       _chkDebug = MakeCheck("记录调试日志", new Point(252, 104));
       _chkDebug.Checked = false;
 
       cardOpt.Controls.AddRange(new Control[] {
-        t2, _chkLetters, _chkDigits, _chkPunct, _chkFunc, _chkModifiers, _chkClickSpeak, _chkDebug
+        t2, _chkLetters, _chkDigits, _chkPunct, _chkFunc, _chkModifiers, _chkClickSpeak,
+        _chkDebug
       });
 
       RoundedButton btnTestZh = new RoundedButton();
@@ -560,6 +640,17 @@ namespace GenDaLangDu {
     private void OnKey(object sender, KeyHookEventArgs e) {
       if (!_listening) return;
       if (!_testMode && IsOurProcessForeground()) return;
+      /* 朗读选中内容时，按 Esc 立即停止（不朗读 Esc 本身、不拦截其它用途） */
+      if (e.Vk == 0x1B && !e.IsUp && _selectionFloater != null && _selectionFloater.IsReading &&
+          !CtrlDown() && !AltDown() && !WinDown()) {
+        _speaker.Stop();
+        _selectionFloater.SetReading(false);
+        _selectionFloater.HideNow();
+        DebugLog("SEL_STOP_ESC");
+        return;
+      }
+      /* 程序自己注入的复制键（keybd_event Ctrl+C）不朗读、不处理 */
+      if (e.IsInjected) return;
       if (e.IsUp) {
         HandleKeyUp(e);
         return;
@@ -577,14 +668,18 @@ namespace GenDaLangDu {
         bool win = WinDown();
         if (ctrl || alt || win) {
           _shiftTapArmed = false;
+          _shiftSpeakPending = false;
           DebugLog("SHIFT_TAP_CANCEL_COMBO ctrl=" + ctrl + " alt=" + alt + " win=" + win);
         } else {
           _shiftTapArmed = true;
           _shiftDownAt = DateTime.Now;
           _shiftTapPid = CurrentForegroundPid();
+          /* 不立即念 Shift：若随后有标点/字母等组合键，只念那个键本身 */
+          _shiftSpeakPending = true;
         }
       } else {
         _shiftTapArmed = false;
+        _shiftSpeakPending = false;
       }
       _lastKeyAt = DateTime.Now;
       DebugLog("KEY vk=0x" + e.Vk.ToString("X") + " scan=0x" + e.Scan.ToString("X"));
@@ -626,17 +721,27 @@ namespace GenDaLangDu {
       if (chineseMode) {
         if (e.Vk == 0x20) {
           _lastTypingCommitKeyAt = DateTime.Now;
-          if (_composing) {
-            CheckUiText();
+          /* 中文模式下空格是输入法的上屏键：不响提示音，等上屏内容朗读。
+             Shift/大写锁定下的英文直通空格才保留提示音 */
+          if (!ImeEnglishNow && !ShiftOrCaps()) {
             if (_composing) {
-              _composing = false;
-              MarkChineseCommit();
+              CheckUiText();
+              if (_composing) {
+                _composing = false;
+                MarkChineseCommit();
+                ScheduleImeCheck();
+                return;
+              }
               ScheduleImeCheck();
               return;
             }
+            /* 输入法内部组字但程序没跟上（_composing=false）时，空格仍是上屏键 */
+            CheckUiText();
             ScheduleImeCheck();
             return;
           }
+          /* 英文直通空格：残留的组字标记清掉，交回功能键音效处理 */
+          _composing = false;
         } else if (e.Vk == 0x08 && _composing) {
           CheckUiText();
           if (_composing) {
@@ -674,12 +779,7 @@ namespace GenDaLangDu {
           else if (e.Vk == 0x5B || e.Vk == 0x5C) _lastWinDownAt = DateTime.Now;
           else if (e.Vk == 0x10 || e.Vk == 0xA0 || e.Vk == 0xA1) _lastShiftDownAt = DateTime.Now;
           if (_chkModifiers.Checked) {
-            if (e.Vk == 0x10 || e.Vk == 0xA0 || e.Vk == 0xA1) {
-              /* Shift 单独按（切换中英文）立即播报；与 Ctrl/Alt/Win 组合时不单独念，随组合念 */
-              if (_pendingModName == null && !CtrlHeld() && !AltHeld() && !WinHeld()) {
-                _speaker.SpeakEnWord("Shift");
-              }
-            } else {
+            if (!(e.Vk == 0x10 || e.Vk == 0xA0 || e.Vk == 0xA1)) {
               /* Ctrl/Alt/Win 延迟250ms：等待可能的组合键；单独按则松手后念 */
               string en = KeyTranslator.GetKeyNameEn(e.Vk);
               if (en != null) {
@@ -729,6 +829,10 @@ namespace GenDaLangDu {
       }
 
       string chars = KeyTranslator.GetChars(e.Vk, e.Scan);
+      /* 中文状态下反斜杠键实际输出顿号（多多五笔中文标点），不要念成反斜杠 */
+      if (chineseMode && !ImeEnglishNow) {
+        chars = chars.Replace('\\', '、');
+      }
       DebugLog("CHARS vk=0x" + e.Vk.ToString("X") + " [" + chars + "]");
       if (!string.IsNullOrEmpty(chars)) {
         foreach (char c in chars) {
@@ -793,6 +897,12 @@ namespace GenDaLangDu {
     private void HandleKeyUp(KeyHookEventArgs e) {
       bool isShift = e.Vk == 0x10 || e.Vk == 0xA0 || e.Vk == 0xA1;
       if (!isShift) return;
+      /* Shift 松开：若期间没有按下其它键（单独按），补念 Shift */
+      if (_shiftSpeakPending && _chkModifiers.Checked) {
+        _shiftSpeakPending = false;
+        _speaker.SpeakEnWord("Shift");
+        DebugLog("ENW:Shift keyup");
+      }
       if (!_shiftTapArmed) return;
       _shiftTapArmed = false;
       double heldMs = (DateTime.Now - _shiftDownAt).TotalMilliseconds;
@@ -894,6 +1004,7 @@ namespace GenDaLangDu {
       if (RecentlySpoken(text)) return;
       SpeakZh(text);
       RememberSpoken(text);
+      if (_testMode) _autoSpoken += text.Length;
       DebugLog("VK_PACKET_ZH_MERGE [" + text + "]");
     }
 
@@ -920,12 +1031,24 @@ namespace GenDaLangDu {
       /* 退格/删除后1秒内，若期间没有新的按键，差异不朗读（删除不会产生新增，误读的'插入'不可信）；
          若删除后用户已继续打字，则正常朗读，避免把删除后马上打出的字吞掉 */
       if ((DateTime.Now - _lastDeleteAt).TotalMilliseconds < 1000 &&
-          _lastDeleteAt > _lastKeyAt) return false;
+          _lastDeleteAt > _lastKeyAt) {
+        DebugLog("UI_INSERT_SKIP delete");
+        return false;
+      }
       /* 按键通道刚读到汉字提交（VK_PACKET）时，差异通道让路，避免双读 */
-      if ((DateTime.Now - _lastPacketCjkAt).TotalMilliseconds < 2000) return false;
-      if ((DateTime.Now - _lastTsfCommitAt).TotalMilliseconds < 600) return false;
+      if ((DateTime.Now - _lastPacketCjkAt).TotalMilliseconds < 2000) {
+        DebugLog("UI_INSERT_SKIP packet");
+        return false;
+      }
+      if ((DateTime.Now - _lastTsfCommitAt).TotalMilliseconds < 600) {
+        DebugLog("UI_INSERT_SKIP tsf");
+        return false;
+      }
       string clean = StripCompositionLetters(ins);
-      if (clean.Length == 0) return false;
+      if (clean.Length == 0) {
+        DebugLog("UI_INSERT_SKIP clean0");
+        return false;
+      }
       /* 末尾标点若正由按键通道延迟朗读（200ms内），从差异文本剥离，避免双读 */
       while (clean.Length > 0) {
         string pn = KeyTranslator.PunctName(clean[clean.Length - 1]);
@@ -935,15 +1058,33 @@ namespace GenDaLangDu {
           break;
         }
       }
-      if (clean.Length == 0) return false;
+      if (clean.Length == 0) {
+        DebugLog("UI_INSERT_SKIP punct_tail");
+        return false;
+      }
       string spk = PunctSpokenForm(FilterForSpeech(clean));
-      if (string.IsNullOrEmpty(spk)) return false;
-      if (!HasChineseText(clean)) return false;
+      if (string.IsNullOrEmpty(spk)) {
+        DebugLog("UI_INSERT_SKIP spk");
+        return false;
+      }
+      if (!HasChineseText(clean)) {
+        DebugLog("UI_INSERT_SKIP nozh");
+        return false;
+      }
       /* 因果校验：差异结果必须能用最近的按键解释（打过五笔字母+提交），
          粘贴（Ctrl+V/Shift+Insert）的内容与按键对不上，不朗读 */
-      if (!HasTypingSignature()) return false;
-      if (!AllowPunctSpeak(clean)) return false;
-      if (RecentlySpoken(spk)) return false;
+      if (!HasTypingSignature()) {
+        DebugLog("UI_INSERT_SKIP typing");
+        return false;
+      }
+      if (!AllowPunctSpeak(clean)) {
+        DebugLog("UI_INSERT_SKIP punct");
+        return false;
+      }
+      if (RecentlySpoken(spk)) {
+        DebugLog("UI_INSERT_SKIP recent");
+        return false;
+      }
       _composing = false;
       SpeakZh(spk);
       RememberSpoken(spk);
@@ -1125,10 +1266,312 @@ namespace GenDaLangDu {
         if (pid == 0 || pid == (uint)Process.GetCurrentProcess().Id) return;
         if (pid != _appStates.CurrentPid) {
           _appStates.SetCurrentPid(pid);
+          /* 切换窗口时隐藏朗读按钮（朗读中可用 Esc 停止） */
+          HideSelectionButton();
           DebugLog("FOCUS pid=" + pid + " app=" + _appStates.GetAppName(pid) +
                    " english=" + _appStates.IsEnglish(pid));
         }
       } catch { }
+    }
+
+    /// <summary>监听"选中区域变化"事件（高亮变化），选中时弹朗读按钮，
+    /// 不选中时隐藏。纯事件驱动，平时零开销。</summary>
+    private void InitSelectionWatcher() {
+      try {
+        if (_selectionFocusHandler == null) {
+          _selectionFocusHandler = delegate(object src, AutomationFocusChangedEventArgs e) {
+            /* 不在 UIA 事件回调栈里做 UIA 调用（会导致原生崩溃），排队到消息循环执行 */
+            try { BeginInvoke((MethodInvoker)SubscribeSelectionElement); } catch { }
+          };
+          Automation.AddAutomationFocusChangedEventHandler(_selectionFocusHandler);
+        }
+        SubscribeSelectionElement();
+      } catch { }
+    }
+
+    private void SubscribeSelectionElement() {
+      try {
+        if (_selectionSubscribedElement != null) {
+          try {
+            Automation.RemoveAutomationEventHandler(
+              TextPattern.TextSelectionChangedEvent, _selectionSubscribedElement, _selectionChangedHandler);
+          } catch { }
+          _selectionSubscribedElement = null;
+        }
+        AutomationElement el = AutomationElement.FocusedElement;
+        if (el == null) {
+          DebugLog("SEL_SUBSCRIBE null");
+          return;
+        }
+        if (_selectionChangedHandler == null) {
+          _selectionChangedHandler = delegate(object src, AutomationEventArgs e) {
+            try { BeginInvoke((MethodInvoker)UpdateSelectionButton); } catch { }
+          };
+        }
+        /* 找文本提供者：浏览器/文档里焦点元素可能是正文子元素，
+           选区变化事件由支持 TextPattern 的提供者发出，需向上查找并订阅它 */
+        AutomationElement target = el;
+        AutomationElement cur = el;
+        for (int i = 0; i < 12; i++) {
+          if (cur == null) break;
+          try {
+            object p;
+            if (cur.TryGetCurrentPattern(TextPattern.Pattern, out p)) {
+              target = cur;
+              break;
+            }
+          } catch { }
+          try {
+            cur = TreeWalker.ControlViewWalker.GetParent(cur);
+          } catch {
+            break;
+          }
+        }
+        Automation.AddAutomationEventHandler(
+          TextPattern.TextSelectionChangedEvent, target,
+          TreeScope.Element | TreeScope.Descendants, _selectionChangedHandler);
+        _selectionSubscribedElement = target;
+        DebugLog("SEL_SUBSCRIBE type=" + el.Current.ControlType.ProgrammaticName +
+                 " class=" + (el.Current.ClassName ?? ""));
+      } catch (Exception ex) {
+        DebugLog("SEL_SUBSCRIBE_FAIL " + ex.Message);
+      }
+    }
+
+    /// <summary>更新选中朗读按钮：事件驱动和"鼠标活动后轮询"共用入口。
+    /// 轮询兜底让 WPS 这类不发选区事件的老软件也能弹按钮；
+    /// 仅在鼠标/键盘活动后查询，平时零开销。</summary>
+    private void UpdateSelectionButton() {
+      if (_selectionFloater == null) return;
+      if (!_listening || _testMode) {
+        HideSelectionButton();
+        return;
+      }
+      if (!_testMode && IsOurProcessForeground()) {
+        HideSelectionButton();
+        return;
+      }
+      /* 只在鼠标/键盘活动后检查（选中文字必然伴随鼠标拖选或 Shift+方向键），
+         避免输入法/光标移动的事件风暴反复隐藏按钮并拖慢界面 */
+      bool active = (DateTime.Now - _lastKeyAt).TotalMilliseconds < 1500 ||
+                    (DateTime.Now - _lastMouseDownAt).TotalMilliseconds < 1500 ||
+                    (DateTime.Now - _lastMouseUpAt).TotalMilliseconds < 1500;
+      if (!active) return;
+      if ((DateTime.Now - _lastSelectionCheckAt).TotalMilliseconds < 250) return;
+      _lastSelectionCheckAt = DateTime.Now;
+      bool hasSel = TextReader.HasSelection();
+      bool visible = _selectionFloater.Visible;
+      bool dragRecent = (DateTime.Now - _lastDragSelectAt).TotalMilliseconds < 2500;
+      bool clickRecent = (DateTime.Now - _lastClickAt).TotalMilliseconds < 1500;
+      bool keyRecent = (DateTime.Now - _lastKeyAt).TotalMilliseconds < 1500;
+      bool clickNewer = clickRecent && _lastClickAt > _lastDragSelectAt;
+      /* 只有 WPS 这类查不到真实选区的老应用才用"拖选动作"兜底（白名单），
+         避免任务栏/桌面等误弹；浏览器/Word/Codex 走真实选区判断 */
+      bool showByDrag = dragRecent && IsDragFallbackApp(CurrentForegroundPid());
+      bool clickOnButton = visible &&
+        _mouseDownPos.X >= _selectionFloater.Left &&
+        _mouseDownPos.X <= _selectionFloater.Right &&
+        _mouseDownPos.Y >= _selectionFloater.Top &&
+        _mouseDownPos.Y <= _selectionFloater.Bottom;
+      if (visible && clickNewer && !clickOnButton) {
+        /* 点击别处（比拖选更新）视为取消选区：优先于拖选兜底 */
+        if ((DateTime.Now - _lastButtonToggleAt).TotalMilliseconds >= 600) {
+          _lastButtonToggleAt = DateTime.Now;
+          HideSelectionButton();
+          DebugLog("SEL_BTN_HIDE click");
+        }
+        return;
+      }
+      if (visible && keyRecent && !hasSel) {
+        /* 键盘移动光标/取消选区 */
+        if ((DateTime.Now - _lastButtonToggleAt).TotalMilliseconds >= 600) {
+          _lastButtonToggleAt = DateTime.Now;
+          HideSelectionButton();
+          DebugLog("SEL_BTN_HIDE key");
+        }
+        return;
+      }
+      if (hasSel || showByDrag) {
+        /* 有选区（UIA 支持）或刚发生拖选（WPS 等老软件兜底）：显示按钮，
+           首次出现定位到鼠标旁，已显示则固定位置（避免追着鼠标跑）；
+           隐藏后只在新的拖选或键盘选中时重现（点击不算，防止闪烁） */
+        if (!visible && (showByDrag || (hasSel && (dragRecent || clickRecent || keyRecent)))) {
+          if ((DateTime.Now - _lastButtonToggleAt).TotalMilliseconds >= 600) {
+            _lastButtonToggleAt = DateTime.Now;
+            Native.POINT pt;
+            /* 最近有鼠标抬起：定位到高亮末尾（抬起位置）；否则（键盘选中等）用当前鼠标位置 */
+            if ((DateTime.Now - _lastMouseUpAt).TotalMilliseconds < 1500) {
+              pt = _mouseUpPos;
+            } else {
+              Native.GetCursorPos(out pt);
+            }
+            _selectionFloater.ShowFor(new Point(pt.X, pt.Y));
+            DebugLog("SEL_BTN_SHOW");
+          }
+        }
+        return;
+      }
+      /* 无选区且无新操作：保持当前状态（隐藏的不再反复打日志） */
+    }
+
+    private void HideSelectionButton() {
+      if (_selectionFloater == null) return;
+      _selectionFloater.SetReading(false);
+      _selectionFloater.HideNow();
+    }
+
+    private void CheckSelectionDone() {
+      if (_selectionFloater == null || !_selectionFloater.IsReading) return;
+      if (_speaker.IsBusy) return;
+      DebugLog("SEL_DONE_AUTO_HIDE");
+      HideSelectionButton();
+    }
+
+    /// <summary>点击朗读按钮：用 Ctrl+C 复制当前选区到剪贴板，读取后恢复剪贴板。
+    /// 不用 UIA 读选区文本（某些应用会触发 UIA 原生崩溃）。</summary>
+    private void OnSelectionSpeakRequested() {
+      /* 按钮 Click 与鼠标钩子兜底可能同时触发，400ms 内只响应一次 */
+      if ((DateTime.Now - _lastSpeakRequestAt).TotalMilliseconds < 400) return;
+      _lastSpeakRequestAt = DateTime.Now;
+      if (_selectionFloater.IsReading) {
+        /* 结束朗读：停止并隐藏按钮 */
+        _speaker.Stop();
+        _selectionFloater.SetReading(false);
+        _selectionFloater.HideNow();
+        DebugLog("SEL_STOP");
+        return;
+      }
+      string text = CopySelectionText();
+      if (string.IsNullOrEmpty(text)) {
+        DebugLog("SEL_SPEAK_EMPTY");
+        _selectionFloater.SetReading(false);
+        _selectionFloater.HideNow();
+        return;
+      }
+      string t = text.Trim();
+      if (t.Length == 0) {
+        DebugLog("SEL_SPEAK_EMPTY");
+        _selectionFloater.SetReading(false);
+        _selectionFloater.HideNow();
+        return;
+      }
+      if (HasChineseText(t)) {
+        SpeakZh(t);
+      } else {
+        _speaker.SpeakEnWord(t);
+      }
+      _selectionFloater.SetReading(true);
+      DebugLog("SEL_SPEAK [" + TruncateForLog(t) + "]");
+    }
+
+    private string CopySelectionText() {
+      string saved = "";
+      bool hadClip = false;
+      try {
+        saved = System.Windows.Forms.Clipboard.GetText();
+        hadClip = true;
+      } catch { }
+      try {
+        IntPtr fg = Native.GetForegroundWindow();
+        uint fgPid = 0;
+        if (fg != IntPtr.Zero) Native.GetWindowThreadProcessId(fg, out fgPid);
+        bool chromium = IsChromiumApp(fgPid);
+        uint seqBefore = Native.GetClipboardSequenceNumber();
+        DebugLog("SEL_COPY_BEGIN fgpid=" + fgPid + " seq=" + seqBefore);
+        /* 不清空剪贴板（清空会让本程序占用剪贴板，Edge 复制不进去）。
+           复制后剪贴板序列号变化 = Edge 确实写入了新内容，才读取。 */
+        if (chromium) InputSender.PressCtrlCKeybd();
+        else SendWmCopy();
+        string t = null;
+        for (int i = 0; i < 3; i++) {
+          System.Threading.Thread.Sleep(250);
+          try {
+            uint seq = Native.GetClipboardSequenceNumber();
+            if (seq != seqBefore) {
+              t = System.Windows.Forms.Clipboard.GetText();
+              if (!string.IsNullOrEmpty(t)) break;
+            }
+          } catch (Exception ex) {
+            try {
+              IntPtr owner = Native.GetClipboardOwner();
+              uint ownerPid = 0;
+              if (owner != IntPtr.Zero) Native.GetWindowThreadProcessId(owner, out ownerPid);
+              DebugLog("SEL_COPY_GET_EX " + ex.Message + " owner=" + ownerPid);
+            } catch {
+              DebugLog("SEL_COPY_GET_EX " + ex.Message);
+            }
+          }
+          if (i < 2) {
+            /* 序列号没变 = 浏览器没响应复制，重新发送一次复制键 */
+            if (chromium) InputSender.PressCtrlCKeybd();
+            else SendWmCopy();
+          }
+        }
+        DebugLog("SEL_COPY_END len=" + (t == null ? -1 : t.Length));
+        return string.IsNullOrEmpty(t) ? null : t;
+      } catch (Exception ex) {
+        DebugLog("SEL_COPY_EX " + ex.Message);
+        return null;
+      } finally {
+        try {
+          if (hadClip) {
+            System.Windows.Forms.Clipboard.SetText(saved);
+          } else {
+            System.Windows.Forms.Clipboard.Clear();
+          }
+        } catch { }
+      }
+    }
+
+    /// <summary>Chromium 类应用（浏览器/Electron）才允许键盘注入复制；
+    /// Word/WPS/记事本等标准控件只用 WM_COPY，绝不回退键盘注入（防止误触发剪切）。</summary>
+    private static bool IsChromiumApp(uint pid) {
+      try {
+        using (System.Diagnostics.Process p = System.Diagnostics.Process.GetProcessById((int)pid)) {
+          string n = p.ProcessName.ToLowerInvariant();
+          return n == "msedge" || n == "chrome" || n == "chatgpt" ||
+                 n == "bilibili" || n == "yuewenedit" || n == "codex" ||
+                 n == "electron";
+        }
+      } catch {
+        return false;
+      }
+    }
+
+    /// <summary>拖选动作兜底只给查不到真实选区的老软件（WPS 系列），
+    /// 避免任务栏、桌面等无关窗口误弹朗读按钮。</summary>
+    private static bool IsDragFallbackApp(uint pid) {
+      try {
+        using (System.Diagnostics.Process p = System.Diagnostics.Process.GetProcessById((int)pid)) {
+          string n = p.ProcessName.ToLowerInvariant();
+          return n == "wps" || n == "et" || n == "wpp";
+        }
+      } catch {
+        return false;
+      }
+    }
+
+    /// <summary>优先用 WM_COPY 窗口消息复制选区（Word/WPS/记事本等标准控件安全复制，
+    /// 不会像键盘注入那样有误触剪切的可能）；返回是否成功发送。</summary>
+    private static bool SendWmCopy() {
+      try {
+        IntPtr fg = Native.GetForegroundWindow();
+        if (fg == IntPtr.Zero) return false;
+        uint pid;
+        uint tid = Native.GetWindowThreadProcessId(fg, out pid);
+        Native.GUITHREADINFO info = new Native.GUITHREADINFO();
+        info.cbSize = System.Runtime.InteropServices.Marshal.SizeOf(typeof(Native.GUITHREADINFO));
+        if (Native.GetGUIThreadInfo(tid, out info) && info.hwndFocus != IntPtr.Zero) {
+          Native.SendMessage(info.hwndFocus, 0x0301, IntPtr.Zero, IntPtr.Zero);
+          return true;
+        }
+      } catch { }
+      return false;
+    }
+
+    private static string TruncateForLog(string s) {
+      if (s == null) return "";
+      return s.Length <= 40 ? s : s.Substring(0, 40) + "…";
     }
 
     private void CheckUiText() {
@@ -1938,6 +2381,21 @@ namespace GenDaLangDu {
         _tray.Visible = false;
         _tray.Dispose();
       }
+      if (_selectionFloater != null) {
+        _selectionFloater.HideNow();
+        _selectionFloater.Dispose();
+        _selectionFloater = null;
+      }
+      try {
+        if (_selectionSubscribedElement != null && _selectionChangedHandler != null) {
+          Automation.RemoveAutomationEventHandler(
+            TextPattern.TextSelectionChangedEvent, _selectionSubscribedElement, _selectionChangedHandler);
+        }
+        if (_selectionFocusHandler != null) {
+          Automation.RemoveAutomationFocusChangedEventHandler(_selectionFocusHandler);
+        }
+      } catch { }
+      _selectionSubscribedElement = null;
       LogTest("EXIT");
       if (_speaker != null) _speaker.Dispose();
       base.OnFormClosing(e);
@@ -1948,11 +2406,27 @@ namespace GenDaLangDu {
       _hook.KeyEvent += OnKeyBridge;
       _mouseHook.LeftButtonDown += delegate {
         _lastMouseDownAt = DateTime.Now;
+        Native.GetCursorPos(out _mouseDownPos);
         /* 按住 Shift 点选文字时，松开不视为中英切换 */
         _shiftTapArmed = false;
       };
+      _mouseHook.LeftButtonUp += delegate {
+        _lastMouseUpAt = DateTime.Now;
+        Native.POINT up;
+        Native.GetCursorPos(out up);
+        _mouseUpPos = up;
+        int dx = up.X - _mouseDownPos.X;
+        int dy = up.Y - _mouseDownPos.Y;
+        if (Math.Sqrt(dx * dx + dy * dy) > 16) {
+          /* 按下到抬起之间移动了距离 = 拖选动作（WPS 等无选区接口应用的兜底信号） */
+          _lastDragSelectAt = DateTime.Now;
+        } else {
+          _lastClickAt = DateTime.Now;
+        }
+      };
       TsfHook.CommitReceived += OnTsfCommit;
       TsfHook.Init();
+      InitSelectionWatcher();
       if (!TsfHook.IsActive && TsfHook.LastError.Length > 0) {
         DebugLog("TSF_HOOK_ERR " + TsfHook.LastError);
       } else if (TsfHook.IsActive) {

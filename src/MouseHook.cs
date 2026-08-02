@@ -7,6 +7,7 @@ namespace GenDaLangDu {
   public sealed class MouseHook : IDisposable {
     private const int WH_MOUSE_LL = 14;
     private const uint WM_LBUTTONDOWN = 0x201;
+    private const uint WM_LBUTTONUP = 0x202;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct MSLLHOOKSTRUCT {
@@ -40,6 +41,7 @@ namespace GenDaLangDu {
     private volatile bool _stopping;
 
     public event Action LeftButtonDown;
+    public event Action LeftButtonUp;
 
     public bool IsInstalled {
       get { return _installed; }
@@ -102,10 +104,16 @@ namespace GenDaLangDu {
     }
 
     private IntPtr Callback(int nCode, IntPtr wParam, IntPtr lParam) {
-      if (nCode >= 0 && (uint)wParam.ToInt64() == WM_LBUTTONDOWN) {
+      if (nCode >= 0) {
+        uint msg = (uint)wParam.ToInt64();
         try {
-          Action h = LeftButtonDown;
-          if (h != null) h();
+          if (msg == WM_LBUTTONDOWN) {
+            Action h = LeftButtonDown;
+            if (h != null) h();
+          } else if (msg == WM_LBUTTONUP) {
+            Action h = LeftButtonUp;
+            if (h != null) h();
+          }
         } catch { }
       }
       return CallNextHookEx(_hookId, nCode, wParam, lParam);

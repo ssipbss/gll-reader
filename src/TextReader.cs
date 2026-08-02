@@ -83,6 +83,47 @@ namespace GenDaLangDu {
       }
     }
 
+    /// <summary>判断焦点控件当前是否有选区（只取选区数量，不读文本）。
+    /// 注意：对选区调用 GetText 在某些应用上会触发 UIA 原生崩溃，取文本改用剪贴板。</summary>
+    public static bool HasSelection() {
+      try {
+        AutomationElement el = AutomationElement.FocusedElement;
+        if (el == null) return false;
+        AutomationElement cur = el;
+        for (int i = 0; i < 12; i++) {
+          if (cur == null) break;
+          try {
+            object pattern;
+            if (cur.TryGetCurrentPattern(TextPattern.Pattern, out pattern)) {
+              TextPattern tp = (TextPattern)pattern;
+              TextPatternRange[] sel = tp.GetSelection();
+              if (sel != null && sel.Length > 0) {
+                /* 光标 vs 选区：用边界矩形总宽度区分（光标约1px，选中文字数十px以上）。
+                   不用 CompareEndpoints（Chromium 下不可靠），更不读文本（会触发 UIA 原生崩溃） */
+                try {
+                  System.Windows.Rect[] rects = sel[0].GetBoundingRectangles();
+                  if (rects != null && rects.Length > 0) {
+                    double totalWidth = 0;
+                    foreach (System.Windows.Rect rc in rects) totalWidth += rc.Width;
+                    if (totalWidth > 4) return true;
+                  }
+                } catch {
+                  return false;
+                }
+              }
+              return false;
+            }
+          } catch { }
+          try {
+            cur = TreeWalker.ControlViewWalker.GetParent(cur);
+          } catch {
+            break;
+          }
+        }
+      } catch { }
+      return false;
+    }
+
     internal static bool IsTsfCoveredForeground() {
       try {
         IntPtr h = Native.GetForegroundWindow();

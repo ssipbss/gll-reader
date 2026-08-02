@@ -11,6 +11,7 @@ namespace GenDaLangDu {
     public const uint WM_SYSKEYUP = 0x105;
     public const uint WM_QUIT = 0x0012;
     public const uint LLKHF_UP = 0x80;
+    public const uint LLKHF_INJECTED = 0x10;
 
     [StructLayout(LayoutKind.Sequential)]
     public struct KBDLLHOOKSTRUCT {
@@ -95,6 +96,34 @@ namespace GenDaLangDu {
 
     [DllImport("user32.dll")]
     public static extern short GetAsyncKeyState(int vKey);
+
+    [DllImport("user32.dll")]
+    public static extern bool GetCursorPos(out POINT lpPoint);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetClipboardOwner();
+
+    [DllImport("user32.dll")]
+    public static extern uint GetClipboardSequenceNumber();
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct GUITHREADINFO {
+      public int cbSize;
+      public uint flags;
+      public IntPtr hwndActive;
+      public IntPtr hwndFocus;
+      public IntPtr hwndCapture;
+      public IntPtr hwndMenuOwner;
+      public IntPtr hwndMoveSize;
+      public IntPtr hwndCaret;
+      public POINT ptCaret;
+    }
+
+    [DllImport("user32.dll")]
+    public static extern bool GetGUIThreadInfo(uint idThread, out GUITHREADINFO lpgui);
 
     [DllImport("user32.dll")]
     public static extern short GetKeyState(int nVirtKey);
