@@ -53,6 +53,9 @@ namespace GenDaLangDu {
     private DateTime _lastTsfCommitAt = DateTime.MinValue;
     private DateTime _pendingSpaceAt = DateTime.MinValue;
     private System.Windows.Forms.Timer _spaceTimer;
+    private string _pendingModName = null;
+    private uint _pendingModVk = 0;
+    private System.Windows.Forms.Timer _modTimer;
     private DateTime _lastPacketCjkAt = DateTime.MinValue;
     private bool _selfElevated;
     private DateTime _lastElevationAskAt = DateTime.MinValue;
@@ -523,14 +526,26 @@ namespace GenDaLangDu {
       }
       _lastKeyAt = DateTime.Now;
       DebugLog("KEY vk=0x" + e.Vk.ToString("X") + " scan=0x" + e.Scan.ToString("X"));
-      if (!IsAltKey(e.Vk) && AltDown()) {
-        DebugLog("ALT_COMBO_IGNORED vk=0x" + e.Vk.ToString("X"));
-        return;
-      }
       /* 粘贴标记：Ctrl+V / Shift+Insert，用于差异通道的因果校验 */
       if ((e.Vk == 0x56 && CtrlDown()) || (e.Vk == 0x2D && ShiftDown())) {
         _lastPasteAt = DateTime.Now;
         DebugLog("PASTE_KEY vk=0x" + e.Vk.ToString("X"));
+      }
+      /* 快捷键组合播报：Ctrl/Alt/Win 按住时再按其它键，整组念（Control C / Alt Tab） */
+      if (_chkModifiers.Checked && _pendingModName != null && !IsModifierKey(e.Vk) &&
+          (CtrlDown() || AltDown() || WinDown())) {
+        string chord = BuildChord(e);
+        if (chord != null) {
+          CancelPendingMod();
+          _speaker.SpeakEnWord(chord);
+          DebugLog("CHORD [" + chord + "]");
+          ScheduleImeCheck();
+          return;
+        }
+      }
+      if (!IsAltKey(e.Vk) && AltDown()) {
+        DebugLog("ALT_COMBO_IGNORED vk=0x" + e.Vk.ToString("X"));
+        return;
       }
 
       ImeState ime = _ime.GetState();
@@ -585,8 +600,20 @@ namespace GenDaLangDu {
       if (keyName != null) {
         if (IsModifierKey(e.Vk)) {
           if (_chkModifiers.Checked) {
-            string en = KeyTranslator.GetKeyNameEn(e.Vk);
-            if (en != null) _speaker.SpeakEnWord(en);
+            if (e.Vk == 0x10 || e.Vk == 0xA0 || e.Vk == 0xA1) {
+              /* Shift 单独按（切换中英文）立即播报；与 Ctrl/Alt/Win 组合时不单独念，随组合念 */
+              if (_pendingModName == null && !CtrlDown() && !AltDown() && !WinDown()) {
+                _speaker.SpeakEnWord("Shift");
+              }
+            } else {
+              /* Ctrl/Alt/Win 延迟250ms：等待可能的组合键；单独按则松手后念 */
+              string en = KeyTranslator.GetKeyNameEn(e.Vk);
+              if (en != null) {
+                _pendingModName = en;
+                _pendingModVk = e.Vk;
+                StartModTimer();
+              }
+            }
           }
           if (_composing) _lastPinyinKeyAt = DateTime.Now;
           if (e.Vk == 0x10 || e.Vk == 0xA0 || e.Vk == 0xA1) {
@@ -1318,6 +1345,88 @@ namespace GenDaLangDu {
         if ((Native.GetAsyncKeyState(0xA1) & 0x8000) != 0) return true;
       } catch { }
       return false;
+    }
+
+    private static bool WinDown() {
+      try {
+        if ((Native.GetAsyncKeyState(0x5B) & 0x8000) != 0) return true;
+        if ((Native.GetAsyncKeyState(0x5C) & 0x8000) != 0) return true;
+      } catch { }
+      return false;
+    }
+
+    private static bool IsKeyDown(uint vk) {
+      try {
+        return (Native.GetAsyncKeyState((int)vk) & 0x8000) != 0;
+      } catch {
+        return false;
+      }
+    }
+
+    private void StartModTimer() {
+      if (_modTimer == null) {
+        _modTimer = new System.Windows.Forms.Timer();
+        _modTimer.Interval = 250;
+        _modTimer.Tick += delegate { FlushPendingMod(); };
+      }
+      _modTimer.Stop();
+      _modTimer.Start();
+    }
+
+    private void FlushPendingMod() {
+      if (_modTimer != null) _modTimer.Stop();
+      if (_pendingModName == null) return;
+      /* 修饰键仍按住（可能在犹豫组合键）：继续等待 */
+      if (IsKeyDown(_pendingModVk)) {
+        StartModTimer();
+        return;
+      }
+      string n = _pendingModName;
+      _pendingModName = null;
+      _pendingModVk = 0;
+      _speaker.SpeakEnWord(n);
+      DebugLog("MOD_ALONE [" + n + "]");
+    }
+
+    private void CancelPendingMod() {
+      _pendingModName = null;
+      _pendingModVk = 0;
+      if (_modTimer != null) _modTimer.Stop();
+    }
+
+    private string BuildChord(KeyHookEventArgs e) {
+      System.Collections.Generic.List<string> parts = new System.Collections.Generic.List<string>();
+      if (CtrlDown()) parts.Add("Control");
+      if (ShiftDown()) parts.Add("Shift");
+      if (AltDown()) parts.Add("Alt");
+      if (WinDown()) parts.Add("Windows");
+      string key = ChordKeyName(e);
+      if (key == null) return null;
+      parts.Add(key);
+      return string.Join(" ", parts.ToArray());
+    }
+
+    private string ChordKeyName(KeyHookEventArgs e) {
+      if (e.Vk >= 0x41 && e.Vk <= 0x5A) return ((char)('A' + (int)(e.Vk - 0x41))).ToString();
+      if (e.Vk >= 0x30 && e.Vk <= 0x39) return DigitWordEn(e.Vk - 0x30);
+      if (e.Vk >= 0x60 && e.Vk <= 0x69) return DigitWordEn(e.Vk - 0x60);
+      return KeyTranslator.GetKeyNameEn(e.Vk);
+    }
+
+    private static string DigitWordEn(uint d) {
+      switch (d) {
+        case 0: return "Zero";
+        case 1: return "One";
+        case 2: return "Two";
+        case 3: return "Three";
+        case 4: return "Four";
+        case 5: return "Five";
+        case 6: return "Six";
+        case 7: return "Seven";
+        case 8: return "Eight";
+        case 9: return "Nine";
+      }
+      return null;
     }
 
     private void CheckElevation() {

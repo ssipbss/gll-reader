@@ -95,6 +95,10 @@ namespace GenDaLangDu {
         case 0x14: return "Caps Lock";
         case 0x1B: return "Escape";
         case 0x20: return "Space";
+        case 0x25: return "Left";
+        case 0x26: return "Up";
+        case 0x27: return "Right";
+        case 0x28: return "Down";
         case 0x2C: return "Print Screen";
         case 0x2D: return "Insert";
         case 0x2E: return "Delete";
