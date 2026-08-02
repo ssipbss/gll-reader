@@ -77,6 +77,8 @@ namespace GenDaLangDu {
     private DateTime _shiftDownAt = DateTime.MinValue;
     private bool _shiftTapArmed;
     private uint _shiftTapPid;
+    private EnPassTracker _enPassTracker = new EnPassTracker();
+    private bool _lastImcChinese = true;
     private bool _closingByTrayExit;
     private bool _loading;
     private bool _forceDebug;
@@ -100,6 +102,8 @@ namespace GenDaLangDu {
     public MainForm(string[] args) {
       _loading = true;
       ParseArgs(args);
+      _enPassTracker.Confirmed += OnEnPassConfirmed;
+      _enPassTracker.Log = DebugLog;
       try {
         _speaker = new Speaker();
         LogTest("SPEAKER_OK");
@@ -125,7 +129,7 @@ namespace GenDaLangDu {
 
       _uiTimer = new System.Windows.Forms.Timer();
       _uiTimer.Interval = 100;
-      _uiTimer.Tick += delegate { TrackFocus(); CheckUiText(); };
+      _uiTimer.Tick += delegate { TrackFocus(); _enPassTracker.Check(); CheckUiText(); };
 
       _selfElevated = SelfElevated();
       _elevTimer = new System.Windows.Forms.Timer();
@@ -551,7 +555,11 @@ namespace GenDaLangDu {
         return;
       }
       if (e.IsAutoRepeat) return;
-      if (e.Vk != 0x08 && e.Vk != 0x2E) _lastDeleteSpeakAt = DateTime.MinValue;
+      if (e.Vk == 0x08 || e.Vk == 0x2E) {
+        _enPassTracker.Cancel("del");
+      } else {
+        _lastDeleteSpeakAt = DateTime.MinValue;
+      }
       bool isShift = e.Vk == 0x10 || e.Vk == 0xA0 || e.Vk == 0xA1;
       if (isShift) {
         bool ctrl = CtrlDown();
@@ -573,6 +581,7 @@ namespace GenDaLangDu {
       /* 粘贴标记：Ctrl+V / Shift+Insert，用于差异通道的因果校验 */
       if ((e.Vk == 0x56 && CtrlHeld()) || (e.Vk == 0x2D && ShiftHeld())) {
         _lastPasteAt = DateTime.Now;
+        _enPassTracker.Cancel("paste");
         DebugLog("PASTE_KEY vk=0x" + e.Vk.ToString("X"));
       }
       /* 快捷键组合播报：Ctrl/Alt/Win 按住时再按其它键，整组念（Control C / Alt Tab） */
@@ -818,6 +827,15 @@ namespace GenDaLangDu {
       if (!_listening) return;
       if (!_testMode && IsOurProcessForeground()) return;
       ImeState st = _ime.GetState();
+      /* 老程序（WPS/记事本等有 IMC）：鼠标切英文后转换状态会变化，直接自愈 */
+      bool nowImcChinese = st.IsChineseMode;
+      if (_lastImcChinese && !nowImcChinese && !ShiftHeld() && !CapsLockOn()) {
+        _appStates.SetEnglishCurrent();
+        _composing = false;
+        _enPassTracker.Cancel("imc");
+        DebugLog("STATE_SELFHEAL_ENGLISH_IMM conv=0x" + st.ConversionMode.ToString("X"));
+      }
+      _lastImcChinese = nowImcChinese;
       if (st.HasImc && !string.IsNullOrEmpty(st.Result)) {
         string r = st.Result;
         if (r != _lastResult) {
@@ -860,6 +878,11 @@ namespace GenDaLangDu {
 
     private bool TrySpeakInserted(string ins) {
       if (string.IsNullOrEmpty(ins)) return false;
+      /* 鼠标切英文的直通字母：记忆状态仍是中文时，先按"候选"缓冲，
+         若短时间后没有被中文替换（五笔组字上屏）则确认英文并朗读 */
+      if (!ImeEnglishNow && IsPureAsciiLetters(ins)) {
+        if (_enPassTracker.Note(ins, _lastUiElement)) return false;
+      }
       /* 退格/删除后1秒内，若期间没有新的按键，差异不朗读（删除不会产生新增，误读的'插入'不可信）；
          若删除后用户已继续打字，则正常朗读，避免把删除后马上打出的字吞掉 */
       if ((DateTime.Now - _lastDeleteAt).TotalMilliseconds < 1000 &&
@@ -904,6 +927,26 @@ namespace GenDaLangDu {
       bool pasted = _lastPasteAt > _lastPinyinKeyAt &&
                     (DateTime.Now - _lastPasteAt).TotalMilliseconds < 2000;
       return typed && !pasted;
+    }
+
+    private static bool IsPureAsciiLetters(string s) {
+      if (string.IsNullOrEmpty(s)) return false;
+      foreach (char c in s) {
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) return false;
+      }
+      return true;
+    }
+
+    /// <summary>英文直通确认：记忆状态翻成英文，并把缓冲的字母补读出来。</summary>
+    private void OnEnPassConfirmed(string letters) {
+      if (ImeEnglishNow) return;
+      _appStates.SetEnglishCurrent();
+      _composing = false;
+      if (_chkLetters.Checked) {
+        foreach (char ch in letters) {
+          _speaker.SpeakEn(ch.ToString());
+        }
+      }
     }
 
     private void OnTsfCommit(uint pid, string text) {
@@ -1081,6 +1124,7 @@ namespace GenDaLangDu {
         return;
       }
       if (_lastUiElement != elementId) {
+        _enPassTracker.Cancel("element");
         string prevText = _lastUiText;
         _lastUiElement = elementId;
         _lastUiText = t;
@@ -1399,6 +1443,7 @@ namespace GenDaLangDu {
     }
 
     private void MarkChineseCommit() {
+      _enPassTracker.Cancel("zh");
       CancelPendingSpace();
       CancelPendingKeySound();
       _appStates.SetChineseCurrent();
