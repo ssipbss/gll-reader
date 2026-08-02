@@ -586,7 +586,7 @@ namespace GenDaLangDu {
         if (IsModifierKey(e.Vk)) {
           if (_chkModifiers.Checked) {
             string en = KeyTranslator.GetKeyNameEn(e.Vk);
-            if (en != null) _speaker.SpeakEn(en);
+            if (en != null) _speaker.SpeakEnWord(en);
           }
           if (_composing) _lastPinyinKeyAt = DateTime.Now;
           if (e.Vk == 0x10 || e.Vk == 0xA0 || e.Vk == 0xA1) {
@@ -611,7 +611,7 @@ namespace GenDaLangDu {
             } else {
               _lastDeleteSpeakAt = DateTime.Now;
               string en = KeyTranslator.GetKeyNameEn(e.Vk);
-              _speaker.SpeakEn(en != null ? en : keyName);
+              _speaker.SpeakEnWord(en != null ? en : keyName);
             }
           } else if (e.Vk == 0x20) {
             /* 空格可能是中文上屏键：延迟350ms，若随后有中文提交则取消，避免把上屏空格当功能键读 */
@@ -625,7 +625,7 @@ namespace GenDaLangDu {
             _spaceTimer.Start();
           } else {
             string en = KeyTranslator.GetKeyNameEn(e.Vk);
-            _speaker.SpeakEn(en != null ? en : keyName);
+            _speaker.SpeakEnWord(en != null ? en : keyName);
           }
         }
         ScheduleImeCheck();
@@ -662,7 +662,7 @@ namespace GenDaLangDu {
             continue;
           }
           if (c == ' ') {
-            if (!_composing && _chkFunc.Checked) _speaker.SpeakEn("Space");
+            if (!_composing && _chkFunc.Checked) _speaker.SpeakEnWord("Space");
             continue;
           }
           if (char.IsDigit(c) || (c >= '０' && c <= '９')) {
@@ -695,7 +695,7 @@ namespace GenDaLangDu {
             continue;
           }
           if (char.IsWhiteSpace(c)) {
-            if (!_composing && _chkFunc.Checked) _speaker.SpeakEn("Space");
+            if (!_composing && _chkFunc.Checked) _speaker.SpeakEnWord("Space");
             continue;
           }
         }
@@ -1272,7 +1272,7 @@ namespace GenDaLangDu {
         return;
       }
       if (RecentlySpoken("Space")) return;
-      _speaker.SpeakEn("Space");
+      _speaker.SpeakEnWord("Space");
       RememberSpoken("Space");
     }
 

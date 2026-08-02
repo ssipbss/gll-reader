@@ -9,7 +9,7 @@ using System.Runtime.InteropServices.WindowsRuntime;
 
 namespace GenDaLangDu {
   public sealed class Speaker : IDisposable {
-    private enum ItemKind { SpeakZh, SpeakEn, SetVoices, Cancel, Stop }
+    private enum ItemKind { SpeakZh, SpeakEn, SpeakEnWord, SetVoices, Cancel, Stop }
 
     private sealed class WorkItem {
       public ItemKind Kind;
@@ -102,7 +102,8 @@ namespace GenDaLangDu {
       while (_queue.TryTake(out tmp, 0)) items.Add(tmp);
       Diag("W_DRAINED " + items.Count);
       System.Text.StringBuilder zh = new System.Text.StringBuilder();
-      System.Text.StringBuilder en = new System.Text.StringBuilder();
+      System.Text.StringBuilder enPending = new System.Text.StringBuilder();
+      System.Collections.Generic.List<string> enWords = new System.Collections.Generic.List<string>();
       bool cancelled = false;
       bool stop = false;
 
@@ -116,7 +117,18 @@ namespace GenDaLangDu {
             break;
           case ItemKind.SpeakEn:
             if (!cancelled) {
-              en.Append(it.Text.ToUpperInvariant());
+              enPending.Append(it.Text.ToUpperInvariant());
+            }
+            break;
+          case ItemKind.SpeakEnWord:
+            /* 功能键英文单词：单独成句，保持正常大小写（Enter/Backspace），
+               中文音色不会逐字母拼读，也不会和前后按键拼成 BackspaceSpace */
+            if (!cancelled) {
+              if (enPending.Length > 0) {
+                enWords.Add(enPending.ToString());
+                enPending.Clear();
+              }
+              enWords.Add(it.Text);
             }
             break;
           case ItemKind.SetVoices:
@@ -129,7 +141,8 @@ namespace GenDaLangDu {
           case ItemKind.Cancel:
             cancelled = true;
             zh.Length = 0;
-            en.Length = 0;
+            enPending.Length = 0;
+            enWords.Clear();
             Cancel(_zh);
             Cancel(_en);
             break;
@@ -137,7 +150,8 @@ namespace GenDaLangDu {
             stop = true;
             cancelled = true;
             zh.Length = 0;
-            en.Length = 0;
+            enPending.Length = 0;
+            enWords.Clear();
             Cancel(_zh);
             Cancel(_en);
             break;
@@ -146,7 +160,8 @@ namespace GenDaLangDu {
 
       int speakCount = 0;
       foreach (WorkItem it in items) {
-        if (it.Kind == ItemKind.SpeakZh || it.Kind == ItemKind.SpeakEn) speakCount++;
+        if (it.Kind == ItemKind.SpeakZh || it.Kind == ItemKind.SpeakEn ||
+            it.Kind == ItemKind.SpeakEnWord) speakCount++;
       }
       _prevBatchCount = speakCount;
 
@@ -155,11 +170,13 @@ namespace GenDaLangDu {
         if (_zhIsRt && _zhRt != null) SpeakRtSync(_zhRt, zh.ToString(), "ZH", _rate, false);
         else SpeakSync(_zh, zh.ToString(), "ZH", ref _lastRateZh, ref _lastVolumeZh, _rate, false);
       }
-      if (en.Length > 0) {
-        if (Log != null) Log("EN_MERGE [" + en + "]");
+      if (enPending.Length > 0) enWords.Add(enPending.ToString());
+      foreach (string enText in enWords) {
+        if (enText.Length == 0) continue;
+        if (Log != null) Log("EN_MERGE [" + enText + "]");
         int enRate = Math.Max(-10, _rate - 2);
-        if (_enIsRt && _enRt != null) SpeakRtSync(_enRt, en.ToString(), "EN", enRate, true);
-        else SpeakSync(_en, en.ToString(), "EN", ref _lastRateEn, ref _lastVolumeEn, enRate, true);
+        if (_enIsRt && _enRt != null) SpeakRtSync(_enRt, enText, "EN", enRate, true);
+        else SpeakSync(_en, enText, "EN", ref _lastRateEn, ref _lastVolumeEn, enRate, true);
       }
       if (stop) _disposed = true;
     }
@@ -525,6 +542,14 @@ namespace GenDaLangDu {
       _prevEnqueueAt = _lastEnqueueAt;
       _lastEnqueueAt = DateTime.Now;
       _queue.Add(new WorkItem { Kind = ItemKind.SpeakEn, Text = text });
+    }
+
+    public void SpeakEnWord(string text) {
+      if (string.IsNullOrEmpty(text)) return;
+      if (Log != null) Log("ENW:" + text);
+      _prevEnqueueAt = _lastEnqueueAt;
+      _lastEnqueueAt = DateTime.Now;
+      _queue.Add(new WorkItem { Kind = ItemKind.SpeakEnWord, Text = text });
     }
 
     public void FlushAll() { }
