@@ -584,7 +584,10 @@ namespace GenDaLangDu {
       string keyName = KeyTranslator.GetKeyName(e.Vk);
       if (keyName != null) {
         if (IsModifierKey(e.Vk)) {
-          if (_chkModifiers.Checked && !chineseMode) SpeakZh(keyName);
+          if (_chkModifiers.Checked) {
+            string en = KeyTranslator.GetKeyNameEn(e.Vk);
+            if (en != null) _speaker.SpeakEn(en);
+          }
           if (_composing) _lastPinyinKeyAt = DateTime.Now;
           if (e.Vk == 0x10 || e.Vk == 0xA0 || e.Vk == 0xA1) {
             bool ctrl = CtrlDown();
@@ -607,7 +610,8 @@ namespace GenDaLangDu {
             DebugLog("DELETE_COALESCE vk=0x" + e.Vk.ToString("X"));
             } else {
               _lastDeleteSpeakAt = DateTime.Now;
-              SpeakZh(keyName);
+              string en = KeyTranslator.GetKeyNameEn(e.Vk);
+              _speaker.SpeakEn(en != null ? en : keyName);
             }
           } else if (e.Vk == 0x20) {
             /* 空格可能是中文上屏键：延迟350ms，若随后有中文提交则取消，避免把上屏空格当功能键读 */
@@ -620,7 +624,8 @@ namespace GenDaLangDu {
             _spaceTimer.Stop();
             _spaceTimer.Start();
           } else {
-            SpeakZh(keyName);
+            string en = KeyTranslator.GetKeyNameEn(e.Vk);
+            _speaker.SpeakEn(en != null ? en : keyName);
           }
         }
         ScheduleImeCheck();
@@ -657,7 +662,7 @@ namespace GenDaLangDu {
             continue;
           }
           if (c == ' ') {
-            if (!_composing && _chkFunc.Checked) SpeakZh("空格");
+            if (!_composing && _chkFunc.Checked) _speaker.SpeakEn("Space");
             continue;
           }
           if (char.IsDigit(c) || (c >= '０' && c <= '９')) {
@@ -690,7 +695,7 @@ namespace GenDaLangDu {
             continue;
           }
           if (char.IsWhiteSpace(c)) {
-            if (!_composing && _chkFunc.Checked) SpeakZh("空格");
+            if (!_composing && _chkFunc.Checked) _speaker.SpeakEn("Space");
             continue;
           }
         }
@@ -1266,9 +1271,9 @@ namespace GenDaLangDu {
         DebugLog("SPACE_AFTER_COMMIT_SKIP");
         return;
       }
-      if (RecentlySpoken("空格")) return;
-      SpeakZh("空格");
-      RememberSpoken("空格");
+      if (RecentlySpoken("Space")) return;
+      _speaker.SpeakEn("Space");
+      RememberSpoken("Space");
     }
 
     private void CancelPendingSpace() {

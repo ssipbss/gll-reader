@@ -82,6 +82,43 @@ namespace GenDaLangDu {
       return null;
     }
 
+    /// <summary>功能键英文名：更短、英文语音播报更快（如 Caps Lock / Enter / Space）</summary>
+    public static string GetKeyNameEn(uint vk) {
+      switch (vk) {
+        case 0x08: return "Backspace";
+        case 0x09: return "Tab";
+        case 0x0D: return "Enter";
+        case 0x10: return "Shift";
+        case 0x11: return "Control";
+        case 0x12: return "Alt";
+        case 0x13: return "Pause";
+        case 0x14: return "Caps Lock";
+        case 0x1B: return "Escape";
+        case 0x20: return "Space";
+        case 0x2C: return "Print Screen";
+        case 0x2D: return "Insert";
+        case 0x2E: return "Delete";
+        case 0x5B: return "Windows";
+        case 0x5C: return "Windows";
+        case 0x5D: return "Menu";
+        case 0x6A: return "Multiply";
+        case 0x6B: return "Add";
+        case 0x6D: return "Subtract";
+        case 0x6E: return "Decimal";
+        case 0x6F: return "Divide";
+        case 0x90: return "Num Lock";
+        case 0x91: return "Scroll Lock";
+        case 0xA0: return "Shift";
+        case 0xA1: return "Shift";
+        case 0xA2: return "Control";
+        case 0xA3: return "Control";
+        case 0xA4: return "Alt";
+        case 0xA5: return "Alt";
+      }
+      if (vk >= 0x70 && vk <= 0x87) return "F" + (vk - 0x70 + 1).ToString();
+      return null;
+    }
+
     public static bool IsLatinLetter(char c) {
       return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
              (c >= 'ａ' && c <= 'ｚ') || (c >= 'Ａ' && c <= 'Ｚ');
