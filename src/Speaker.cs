@@ -9,11 +9,12 @@ using System.Runtime.InteropServices.WindowsRuntime;
 
 namespace GenDaLangDu {
   public sealed class Speaker : IDisposable {
-    private enum ItemKind { SpeakZh, SpeakEn, SpeakEnWord, SetVoices, Cancel, Stop }
+    private enum ItemKind { SpeakZh, SpeakEn, SpeakEnWord, SpeakEnSsml, SetVoices, Cancel, Stop }
 
     private sealed class WorkItem {
       public ItemKind Kind;
       public string Text;
+      public string Ssml;
     }
 
     private readonly BlockingCollection<WorkItem> _queue = new BlockingCollection<WorkItem>();
@@ -105,6 +106,8 @@ namespace GenDaLangDu {
       System.Text.StringBuilder enPending = new System.Text.StringBuilder();
       System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, bool>> enWords =
         new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, bool>>();
+      System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, string>> enSsmls =
+        new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, string>>();
       bool cancelled = false;
       bool stop = false;
 
@@ -133,6 +136,12 @@ namespace GenDaLangDu {
               enWords.Add(new System.Collections.Generic.KeyValuePair<string, bool>(it.Text, true));
             }
             break;
+          case ItemKind.SpeakEnSsml:
+            /* 组合键带单个字母：字母用 say-as characters 包裹，念得清楚（Control A） */
+            if (!cancelled) {
+              enSsmls.Add(new System.Collections.Generic.KeyValuePair<string, string>(it.Text, it.Ssml));
+            }
+            break;
           case ItemKind.SetVoices:
             try {
               ApplyVoices(_zhVoice, _enVoice);
@@ -145,6 +154,7 @@ namespace GenDaLangDu {
             zh.Length = 0;
             enPending.Length = 0;
             enWords.Clear();
+            enSsmls.Clear();
             Cancel(_zh);
             Cancel(_en);
             break;
@@ -154,6 +164,7 @@ namespace GenDaLangDu {
             zh.Length = 0;
             enPending.Length = 0;
             enWords.Clear();
+            enSsmls.Clear();
             Cancel(_zh);
             Cancel(_en);
             break;
@@ -188,6 +199,15 @@ namespace GenDaLangDu {
         if (_enIsRt && _enRt != null) SpeakRtSync(_enRt, enText, "EN", enRate, !asWord);
         else SpeakSync(_en, enText, "EN", ref _lastRateEn, ref _lastVolumeEn, enRate, !asWord);
       }
+      foreach (var ssmlItem in enSsmls) {
+        string plain = ssmlItem.Key;
+        string ssml = ssmlItem.Value;
+        if (Log != null) Log("EN_SSML [" + plain + "]");
+        int enRate = Math.Max(-10, _rate - 2);
+        enRate = Math.Min(10, enRate + 3);
+        if (_enIsRt && _enRt != null) SpeakRtSync(_enRt, plain, "EN", enRate, false, ssml);
+        else SpeakSync(_en, plain, "EN", ref _lastRateEn, ref _lastVolumeEn, enRate, false, ssml);
+      }
       if (stop) _disposed = true;
     }
 
@@ -197,7 +217,7 @@ namespace GenDaLangDu {
     private int _lastVolumeZh = int.MinValue;
     private int _lastRateEn = int.MinValue;
     private int _lastVolumeEn = int.MinValue;
-    private void SpeakSync(dynamic voice, string text, string tag, ref int lastRate, ref int lastVolume, int rate, bool xml) {
+    private void SpeakSync(dynamic voice, string text, string tag, ref int lastRate, ref int lastVolume, int rate, bool xml, string rawSsml = null) {
       if (voice == null) return;
       try {
         if (rate != lastRate) { voice.Rate = rate; lastRate = rate; }
@@ -209,10 +229,11 @@ namespace GenDaLangDu {
         try { fs.Open(wav, 3); } catch { }
         voice.AudioOutputStream = fs;
         try {
-          if (xml) voice.Speak(BuildSayAs(text), 8);
+          if (rawSsml != null) voice.Speak(rawSsml, 8);
+          else if (xml) voice.Speak(BuildSayAs(text), 8);
           else voice.Speak(text, 0);
         } catch (Exception ex) {
-          if (xml) { try { voice.Speak(text, 0); } catch { } }
+          if (rawSsml != null || xml) { try { voice.Speak(text, 0); } catch { } }
           if (Log != null) Log(tag + "_ERR:" + ex.Message);
         }
         try { fs.Close(); } catch { }
@@ -232,7 +253,7 @@ namespace GenDaLangDu {
       }
     }
 
-    private void SpeakRtSync(SpeechSynthesizer synth, string text, string tag, int rate, bool xml) {
+    private void SpeakRtSync(SpeechSynthesizer synth, string text, string tag, int rate, bool xml, string rawSsml = null) {
       if (synth == null) return;
       try {
         try {
@@ -242,11 +263,12 @@ namespace GenDaLangDu {
         try {
           SpeechSynthesisStream stream = null;
           try {
-            var op = xml ? synth.SynthesizeSsmlToStreamAsync(BuildSayAs(text))
-                         : synth.SynthesizeTextToStreamAsync(text);
+            var op = rawSsml != null ? synth.SynthesizeSsmlToStreamAsync(rawSsml)
+                     : xml ? synth.SynthesizeSsmlToStreamAsync(BuildSayAs(text))
+                     : synth.SynthesizeTextToStreamAsync(text);
             stream = op.AsTask(_rtCancel.Token).Result;
           } catch {
-            if (xml) {
+            if (rawSsml != null || xml) {
               var op2 = synth.SynthesizeTextToStreamAsync(text);
               stream = op2.AsTask(_rtCancel.Token).Result;
             } else {
@@ -560,6 +582,17 @@ namespace GenDaLangDu {
       _prevEnqueueAt = _lastEnqueueAt;
       _lastEnqueueAt = DateTime.Now;
       _queue.Add(new WorkItem { Kind = ItemKind.SpeakEnWord, Text = text });
+    }
+
+    public void SpeakEnSsml(string plain, string ssml) {
+      if (string.IsNullOrEmpty(ssml)) {
+        SpeakEnWord(plain);
+        return;
+      }
+      if (Log != null) Log("ENW:" + plain + " SSML=1");
+      _prevEnqueueAt = _lastEnqueueAt;
+      _lastEnqueueAt = DateTime.Now;
+      _queue.Add(new WorkItem { Kind = ItemKind.SpeakEnSsml, Text = plain, Ssml = ssml });
     }
 
     public void FlushAll() { }

@@ -537,7 +537,9 @@ namespace GenDaLangDu {
         string chord = BuildChord(e);
         if (chord != null) {
           CancelPendingMod();
-          _speaker.SpeakEnWord(chord);
+          string ssml = BuildChordSsml(e);
+          if (ssml != null) _speaker.SpeakEnSsml(chord, ssml);
+          else _speaker.SpeakEnWord(chord);
           DebugLog("CHORD [" + chord + "]");
           ScheduleImeCheck();
           return;
@@ -689,7 +691,6 @@ namespace GenDaLangDu {
             continue;
           }
           if (c == ' ') {
-            if (!_composing && _chkFunc.Checked) _speaker.SpeakEnWord("Space");
             continue;
           }
           if (char.IsDigit(c) || (c >= '０' && c <= '９')) {
@@ -722,7 +723,6 @@ namespace GenDaLangDu {
             continue;
           }
           if (char.IsWhiteSpace(c)) {
-            if (!_composing && _chkFunc.Checked) _speaker.SpeakEnWord("Space");
             continue;
           }
         }
@@ -1286,21 +1286,9 @@ namespace GenDaLangDu {
 
     private void FlushPendingSpace() {
       if (_spaceTimer != null) _spaceTimer.Stop();
-      if (_pendingSpaceAt == DateTime.MinValue) return;
-      DateTime spaceAt = _pendingSpaceAt;
+      /* 空格键不再单独播报（英文打字时空格太频繁，英文 Space 一直念很吵）；
+         保留取消逻辑，仅为兼容后续开关 */
       _pendingSpaceAt = DateTime.MinValue;
-      /* 竞态兜底：若差异通道已先处理了本次上屏，空格键仍被当作功能键；
-         空格前80ms内刚有中文提交，则认定这个空格就是上屏键（竞态间隔仅1~30ms，
-         真实空格通常在100ms以上，不会被误吞） */
-      if (_lastZhCommitAt != DateTime.MinValue &&
-          (spaceAt - _lastZhCommitAt).TotalMilliseconds >= 0 &&
-          (spaceAt - _lastZhCommitAt).TotalMilliseconds < 80) {
-        DebugLog("SPACE_AFTER_COMMIT_SKIP");
-        return;
-      }
-      if (RecentlySpoken("Space")) return;
-      _speaker.SpeakEnWord("Space");
-      RememberSpoken("Space");
     }
 
     private void CancelPendingSpace() {
@@ -1403,6 +1391,20 @@ namespace GenDaLangDu {
       string key = ChordKeyName(e);
       if (key == null) return null;
       parts.Add(key);
+      return string.Join(" ", parts.ToArray());
+    }
+
+    /// <summary>组合键若含单个字母（如 Control A），用 say-as characters 包裹字母，
+    /// 让中文音色清楚念出字母，不会一带而过。</summary>
+    private string BuildChordSsml(KeyHookEventArgs e) {
+      string key = ChordKeyName(e);
+      if (key == null || key.Length != 1 || key[0] < 'A' || key[0] > 'Z') return null;
+      System.Collections.Generic.List<string> parts = new System.Collections.Generic.List<string>();
+      if (CtrlDown()) parts.Add("Control");
+      if (ShiftDown()) parts.Add("Shift");
+      if (AltDown()) parts.Add("Alt");
+      if (WinDown()) parts.Add("Windows");
+      parts.Add("<say-as interpret-as=\"characters\">" + key + "</say-as>");
       return string.Join(" ", parts.ToArray());
     }
 
