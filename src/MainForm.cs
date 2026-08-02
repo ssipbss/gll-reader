@@ -733,7 +733,10 @@ namespace GenDaLangDu {
 
     private bool RecentlySpoken(string text) {
       if (_lastSpoken != text) return false;
-      return (DateTime.Now - _lastSpokenAt).TotalMilliseconds < 400;
+      if ((DateTime.Now - _lastSpokenAt).TotalMilliseconds >= 400) return false;
+      /* 若自上次朗读后又按过新键，说明是用户重新输入的相同内容（如"遥遥"），不算重复 */
+      if (_lastKeyAt > _lastSpokenAt) return false;
+      return true;
     }
 
     private void RememberSpoken(string text) {
@@ -1255,10 +1258,11 @@ namespace GenDaLangDu {
       DateTime spaceAt = _pendingSpaceAt;
       _pendingSpaceAt = DateTime.MinValue;
       /* 竞态兜底：若差异通道已先处理了本次上屏，空格键仍被当作功能键；
-         空格前250ms内刚有中文提交，则认定这个空格就是上屏键 */
+         空格前80ms内刚有中文提交，则认定这个空格就是上屏键（竞态间隔仅1~30ms，
+         真实空格通常在100ms以上，不会被误吞） */
       if (_lastZhCommitAt != DateTime.MinValue &&
           (spaceAt - _lastZhCommitAt).TotalMilliseconds >= 0 &&
-          (spaceAt - _lastZhCommitAt).TotalMilliseconds < 250) {
+          (spaceAt - _lastZhCommitAt).TotalMilliseconds < 80) {
         DebugLog("SPACE_AFTER_COMMIT_SKIP");
         return;
       }
