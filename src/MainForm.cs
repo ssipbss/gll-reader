@@ -866,7 +866,7 @@ namespace GenDaLangDu {
             _lastPacketCjkAt = DateTime.Now;
             bool diffAlreadySpoke = c.ToString() == _lastDiffCommitText &&
                                     (DateTime.Now - _lastDiffCommitAt).TotalMilliseconds < 600;
-            if (!diffAlreadySpoke && !(TsfHook.IsActive && TextReader.IsTsfCoveredForeground())) {
+            if (!diffAlreadySpoke && !TextReader.IsTsfCoveredForeground()) {
               BufferPacketZh(c);
             }
             continue;
@@ -875,10 +875,12 @@ namespace GenDaLangDu {
           if (pn != null) {
             if (chineseMode) {
               _composing = false;
-              _lastPunctName = pn;
-              _punctKeyPending = true;
-              _lastPunctKeyAt = DateTime.Now;
-              SchedulePunctSpeak(c);
+              if (_chkPunct.Checked) {
+                _lastPunctName = pn;
+                _punctKeyPending = true;
+                _lastPunctKeyAt = DateTime.Now;
+                SchedulePunctSpeak(c);
+              }
             } else if (_chkPunct.Checked) {
               SchedulePunctSpeak(c);
             }
@@ -2401,8 +2403,6 @@ namespace GenDaLangDu {
         return;
       }
       SaveSettings();
-      TsfHook.CommitReceived -= OnTsfCommit;
-      TsfHook.Shutdown();
       StopListening();
       if (_imeTimer != null) _imeTimer.Stop();
       if (_uiTimer != null) _uiTimer.Stop();
@@ -2455,14 +2455,9 @@ namespace GenDaLangDu {
           _lastClickAt = DateTime.Now;
         }
       };
-      TsfHook.CommitReceived += OnTsfCommit;
-      TsfHook.Init();
+      /* TSF 钩子已停用：最近无任何有效提交事件，且注入是历史闪退根源；
+         中文朗读由输入法事件/文本差异通道覆盖 */
       InitSelectionWatcher();
-      if (!TsfHook.IsActive && TsfHook.LastError.Length > 0) {
-        DebugLog("TSF_HOOK_ERR " + TsfHook.LastError);
-      } else if (TsfHook.IsActive) {
-        DebugLog("TSF_HOOK_READY");
-      }
     }
 
     private void OnKeyBridge(object sender, KeyHookEventArgs e) {

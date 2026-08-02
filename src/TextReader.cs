@@ -45,7 +45,7 @@ namespace GenDaLangDu {
           string wpsText = WpsComReader.GetFocusedText(out elementId, out diag, out caret);
           if (wpsText != null) return wpsText;
         }
-        if (!TsfHook.IsActive || !IsTsfCoveredForeground()) {
+        if (!IsTsfCoveredForeground()) {
           AutomationElement el = AutomationElement.FocusedElement;
           string r = ReadFocused(el, out elementId, out diag, out caret);
           if (r != null) caretAbs = _lastCaretAbsolute;
