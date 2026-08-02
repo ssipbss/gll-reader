@@ -743,8 +743,10 @@ namespace GenDaLangDu {
 
     private bool TrySpeakInserted(string ins) {
       if (string.IsNullOrEmpty(ins)) return false;
-      /* 退格/删除后1秒内差异不朗读：删除不会产生新增，误读的'插入'不可信 */
-      if ((DateTime.Now - _lastDeleteAt).TotalMilliseconds < 1000) return false;
+      /* 退格/删除后1秒内，若期间没有新的按键，差异不朗读（删除不会产生新增，误读的'插入'不可信）；
+         若删除后用户已继续打字，则正常朗读，避免把删除后马上打出的字吞掉 */
+      if ((DateTime.Now - _lastDeleteAt).TotalMilliseconds < 1000 &&
+          _lastDeleteAt > _lastKeyAt) return false;
       /* 按键通道刚读到汉字提交（VK_PACKET）时，差异通道让路，避免双读 */
       if ((DateTime.Now - _lastPacketCjkAt).TotalMilliseconds < 2000) return false;
       if ((DateTime.Now - _lastTsfCommitAt).TotalMilliseconds < 600) return false;
@@ -1250,7 +1252,16 @@ namespace GenDaLangDu {
     private void FlushPendingSpace() {
       if (_spaceTimer != null) _spaceTimer.Stop();
       if (_pendingSpaceAt == DateTime.MinValue) return;
+      DateTime spaceAt = _pendingSpaceAt;
       _pendingSpaceAt = DateTime.MinValue;
+      /* 竞态兜底：若差异通道已先处理了本次上屏，空格键仍被当作功能键；
+         空格前250ms内刚有中文提交，则认定这个空格就是上屏键 */
+      if (_lastZhCommitAt != DateTime.MinValue &&
+          (spaceAt - _lastZhCommitAt).TotalMilliseconds >= 0 &&
+          (spaceAt - _lastZhCommitAt).TotalMilliseconds < 250) {
+        DebugLog("SPACE_AFTER_COMMIT_SKIP");
+        return;
+      }
       if (RecentlySpoken("空格")) return;
       SpeakZh("空格");
       RememberSpoken("空格");
