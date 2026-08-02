@@ -10,6 +10,7 @@ class ShiftTapTest : Form {
     TextBox tb = new TextBox();
     tb.Location = new System.Drawing.Point(20, 30);
     tb.Width = 260;
+    tb.Text = "这是一段用于测试选中朗读的文字内容，朗读按钮应该出现在鼠标旁边。";
     Controls.Add(tb);
     tb.Focus();
     Activate();

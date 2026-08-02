@@ -59,6 +59,11 @@ namespace GenDaLangDu {
     private DateTime _lastSpeakRequestAt = DateTime.MinValue;
     private DateTime _lastButtonToggleAt = DateTime.MinValue;
     private DateTime _lastKeyAt = DateTime.MinValue;
+    private readonly System.Collections.Generic.List<AutomationElement> _trayImeElements =
+      new System.Collections.Generic.List<AutomationElement>();
+    private AutomationPropertyChangedEventHandler _trayImeHandler;
+    private string _trayImeLast = "";
+    private DateTime _lastTrayImeFindAt = DateTime.MinValue;
     private DateTime _lastSpokenAt = DateTime.MinValue;
     private DateTime _lastDeleteSpeakAt = DateTime.MinValue;
     private DateTime _lastDeleteAt = DateTime.MinValue;
@@ -153,7 +158,7 @@ namespace GenDaLangDu {
 
       _uiTimer = new System.Windows.Forms.Timer();
       _uiTimer.Interval = 100;
-      _uiTimer.Tick += delegate { TrackFocus(); _enPassTracker.Check(); CheckUiText(); CheckSelectionDone(); UpdateSelectionButton(); };
+      _uiTimer.Tick += delegate { TrackFocus(); FindTrayImeElement(); _enPassTracker.Check(); CheckUiText(); CheckSelectionDone(); UpdateSelectionButton(); };
 
       _selfElevated = SelfElevated();
       _elevTimer = new System.Windows.Forms.Timer();
@@ -907,7 +912,8 @@ namespace GenDaLangDu {
       if (!_shiftTapArmed) return;
       _shiftTapArmed = false;
       double heldMs = (DateTime.Now - _shiftDownAt).TotalMilliseconds;
-      if (heldMs >= 300) {
+      /* 多多五笔等输入法按住 Shift 约1秒也会切换；3秒内松开且中间无其它键都算切换 */
+      if (heldMs >= 3000) {
         DebugLog("SHIFT_TAP_HOLD_IGNORED ms=" + heldMs.ToString("0"));
         return;
       }
@@ -1222,6 +1228,102 @@ namespace GenDaLangDu {
         }
         SubscribeSelectionElement();
       } catch { }
+    }
+
+    /// <summary>监控任务栏输入法指示器（"中文模式/英语模式"文字）：
+    /// 这是系统实时状态，鼠标切换、Win+空格等任何方式都能感知。</summary>
+    private void InitTrayImeWatcher() {
+      try {
+        if (_trayImeHandler == null) {
+          _trayImeHandler = delegate(object src, AutomationPropertyChangedEventArgs e) {
+            try {
+              string v = e.NewValue == null ? "" : e.NewValue.ToString();
+              ApplyTrayImeState(v);
+            } catch { }
+          };
+        }
+        FindTrayImeElement();
+      } catch { }
+    }
+
+    private void FindTrayImeElement() {
+      try {
+        if ((DateTime.Now - _lastTrayImeFindAt).TotalMilliseconds < 5000) return;
+        _lastTrayImeFindAt = DateTime.Now;
+        if (_trayImeElements.Count > 0) {
+          try {
+            bool ok = true;
+            foreach (AutomationElement el in _trayImeElements) {
+              string n = el.Current.Name ?? "";
+              if (n.Length > 0) ApplyTrayImeState(n);
+            }
+            if (ok) {
+              return;
+            }
+          } catch { }
+          try {
+            foreach (AutomationElement el in _trayImeElements) {
+              Automation.RemoveAutomationPropertyChangedEventHandler(el, _trayImeHandler);
+            }
+          } catch { }
+          _trayImeElements.Clear();
+        }
+        IntPtr tray = Native.FindWindow("Shell_TrayWnd", null);
+        if (tray == IntPtr.Zero) return;
+        AutomationElement rootEl = AutomationElement.FromHandle(tray);
+        if (rootEl == null) return;
+        AutomationElementCollection btns = rootEl.FindAll(TreeScope.Descendants,
+          new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button));
+        foreach (AutomationElement el in btns) {
+          string n = el.Current.Name ?? "";
+          if (n.IndexOf("托盘输入指示器", StringComparison.Ordinal) >= 0) {
+            _trayImeElements.Add(el);
+            try {
+              Automation.AddAutomationPropertyChangedEventHandler(
+                el, TreeScope.Element, _trayImeHandler, AutomationElement.NameProperty);
+            } catch { }
+            ApplyTrayImeState(n);
+            DebugLog("TRAY_IME_WATCH [" + n.Replace("\r", " ").Replace("\n", " ") + "]");
+          }
+        }
+      } catch (Exception ex) {
+        DebugLog("TRAY_IME_FIND_FAIL " + ex.Message);
+      }
+    }
+
+    private void ApplyTrayImeState(string name) {
+      if (string.IsNullOrEmpty(name)) return;
+      bool? chinese = ParseTrayImeName(name);
+      if (chinese == null) return;
+      string key = chinese.Value ? "zh" : "en";
+      if (key == _trayImeLast) return;
+      _trayImeLast = key;
+      bool zh = chinese.Value;
+      if (zh) {
+        _appStates.SetChineseCurrent();
+        _composing = false;
+        DebugLog("TRAY_IME_STATE 中文 [" + name.Replace("\r", " ").Replace("\n", " ") + "]");
+      } else {
+        _appStates.SetEnglishCurrent();
+        _composing = false;
+        DebugLog("TRAY_IME_STATE 英文 [" + name.Replace("\r", " ").Replace("\n", " ") + "]");
+      }
+    }
+
+    /// <summary>解析任务栏输入法指示器名称。不同输入法格式不同：
+    /// 微软五笔显示"中文模式/英语模式"；多多五笔显示"中文/英文"或"英文/中文"。</summary>
+    private static bool? ParseTrayImeName(string name) {
+      if (string.IsNullOrEmpty(name)) return null;
+      if (name.IndexOf("中文模式", StringComparison.Ordinal) >= 0) return true;
+      if (name.IndexOf("英语模式", StringComparison.Ordinal) >= 0) return false;
+      if (name.IndexOf("英文模式", StringComparison.Ordinal) >= 0) return false;
+      if (name.IndexOf("中文/英文", StringComparison.Ordinal) >= 0) return true;
+      if (name.IndexOf("英文/中文", StringComparison.Ordinal) >= 0) return false;
+      if (name.IndexOf("中文(简体", StringComparison.Ordinal) >= 0) return true;
+      if (name.IndexOf("中文", StringComparison.Ordinal) >= 0) return true;
+      if (name.IndexOf("英语", StringComparison.Ordinal) >= 0) return false;
+      if (name.IndexOf("英文", StringComparison.Ordinal) >= 0) return false;
+      return null;
     }
 
     private void SubscribeSelectionElement() {
@@ -2353,6 +2455,14 @@ namespace GenDaLangDu {
         if (_selectionFocusHandler != null) {
           Automation.RemoveAutomationFocusChangedEventHandler(_selectionFocusHandler);
         }
+        if (_trayImeHandler != null) {
+          foreach (AutomationElement el in _trayImeElements) {
+            try {
+              Automation.RemoveAutomationPropertyChangedEventHandler(el, _trayImeHandler);
+            } catch { }
+          }
+          _trayImeElements.Clear();
+        }
       } catch { }
       _selectionSubscribedElement = null;
       LogTest("EXIT");
@@ -2386,6 +2496,7 @@ namespace GenDaLangDu {
       /* TSF 钩子已停用：最近无任何有效提交事件，且注入是历史闪退根源；
          中文朗读由输入法事件/文本差异通道覆盖 */
       InitSelectionWatcher();
+      InitTrayImeWatcher();
     }
 
     private void OnKeyBridge(object sender, KeyHookEventArgs e) {
