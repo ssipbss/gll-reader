@@ -103,7 +103,8 @@ namespace GenDaLangDu {
       Diag("W_DRAINED " + items.Count);
       System.Text.StringBuilder zh = new System.Text.StringBuilder();
       System.Text.StringBuilder enPending = new System.Text.StringBuilder();
-      System.Collections.Generic.List<string> enWords = new System.Collections.Generic.List<string>();
+      System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, bool>> enWords =
+        new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, bool>>();
       bool cancelled = false;
       bool stop = false;
 
@@ -125,10 +126,11 @@ namespace GenDaLangDu {
                中文音色不会逐字母拼读，也不会和前后按键拼成 BackspaceSpace */
             if (!cancelled) {
               if (enPending.Length > 0) {
-                enWords.Add(enPending.ToString());
+                enWords.Add(new System.Collections.Generic.KeyValuePair<string, bool>(
+                  enPending.ToString(), false));
                 enPending.Clear();
               }
-              enWords.Add(it.Text);
+              enWords.Add(new System.Collections.Generic.KeyValuePair<string, bool>(it.Text, true));
             }
             break;
           case ItemKind.SetVoices:
@@ -170,13 +172,19 @@ namespace GenDaLangDu {
         if (_zhIsRt && _zhRt != null) SpeakRtSync(_zhRt, zh.ToString(), "ZH", _rate, false);
         else SpeakSync(_zh, zh.ToString(), "ZH", ref _lastRateZh, ref _lastVolumeZh, _rate, false);
       }
-      if (enPending.Length > 0) enWords.Add(enPending.ToString());
-      foreach (string enText in enWords) {
+      if (enPending.Length > 0) {
+        enWords.Add(new System.Collections.Generic.KeyValuePair<string, bool>(
+          enPending.ToString(), false));
+      }
+      foreach (var enItem in enWords) {
+        string enText = enItem.Key;
+        bool asWord = enItem.Value;
         if (enText.Length == 0) continue;
-        if (Log != null) Log("EN_MERGE [" + enText + "]");
+        if (Log != null) Log("EN_MERGE [" + enText + "] word=" + (asWord ? 1 : 0));
         int enRate = Math.Max(-10, _rate - 2);
-        if (_enIsRt && _enRt != null) SpeakRtSync(_enRt, enText, "EN", enRate, true);
-        else SpeakSync(_en, enText, "EN", ref _lastRateEn, ref _lastVolumeEn, enRate, true);
+        /* 字母走逐字符朗读（say-as characters）；功能键单词走正常文本，避免被拼读 */
+        if (_enIsRt && _enRt != null) SpeakRtSync(_enRt, enText, "EN", enRate, !asWord);
+        else SpeakSync(_en, enText, "EN", ref _lastRateEn, ref _lastVolumeEn, enRate, !asWord);
       }
       if (stop) _disposed = true;
     }
