@@ -56,8 +56,11 @@ namespace GenDaLangDu {
     private string _pendingModName = null;
     private uint _pendingModVk = 0;
     private System.Windows.Forms.Timer _modTimer;
-    private System.Media.SoundPlayer _toneDingPlayer;
-    private System.Media.SoundPlayer _toneDangPlayer;
+    private System.Collections.Generic.Dictionary<string, System.Media.SoundPlayer> _keySoundPlayers =
+      new System.Collections.Generic.Dictionary<string, System.Media.SoundPlayer>();
+    private const string EnterSoundPath = @"C:\Windows\Media\Windows Notify System Generic.wav";
+    private const string BackspaceSoundPath = @"C:\Windows\Media\Windows Ding.wav";
+    private const string SpaceSoundPath = @"C:\Windows\Media\Windows Startup.wav";
     private DateTime _lastPacketCjkAt = DateTime.MinValue;
     private bool _selfElevated;
     private DateTime _lastElevationAskAt = DateTime.MinValue;
@@ -638,8 +641,8 @@ namespace GenDaLangDu {
           else if (e.Vk == 0x08 || e.Vk == 0x2E) {
             _lastDeleteAt = DateTime.Now;
             if (e.Vk == 0x08) {
-              /* 退格键：提示音"叮"，每次按键都响（快速连按退格有节奏反馈） */
-              PlayDing();
+              /* 退格键：系统提示音，每次按键都响 */
+              PlayKeySound(BackspaceSoundPath);
             } else if ((DateTime.Now - _lastDeleteSpeakAt).TotalMilliseconds < 800) {
               DebugLog("DELETE_COALESCE vk=0x" + e.Vk.ToString("X"));
             } else {
@@ -652,8 +655,11 @@ namespace GenDaLangDu {
             bool commitRace = _lastZhCommitAt != DateTime.MinValue &&
                               (DateTime.Now - _lastZhCommitAt).TotalMilliseconds < 80;
             if (!commitRace) {
-              PlayDang();
+              PlayKeySound(SpaceSoundPath);
             }
+          } else if (e.Vk == 0x0D) {
+            /* 回车键：系统提示音 */
+            PlayKeySound(EnterSoundPath);
           } else {
             string en = KeyTranslator.GetKeyNameEn(e.Vk);
             _speaker.SpeakEnWord(en != null ? en : keyName);
@@ -1384,59 +1390,18 @@ namespace GenDaLangDu {
       if (_modTimer != null) _modTimer.Stop();
     }
 
-    private void PlayDing() {
+    private void PlayKeySound(string path) {
       try {
-        if (_toneDingPlayer == null) {
-          _toneDingPlayer = new System.Media.SoundPlayer(CreateToneStream(1318.0, 0.12, 22.0));
-          _toneDingPlayer.Load();
+        if (string.IsNullOrEmpty(path)) return;
+        System.Media.SoundPlayer p;
+        if (!_keySoundPlayers.TryGetValue(path, out p)) {
+          p = new System.Media.SoundPlayer(path);
+          p.Load();
+          _keySoundPlayers[path] = p;
         }
-        _toneDingPlayer.Play();
-        DebugLog("TONE_DING");
+        p.Play();
+        DebugLog("KEY_SOUND [" + System.IO.Path.GetFileName(path) + "]");
       } catch { }
-    }
-
-    private void PlayDang() {
-      try {
-        if (_toneDangPlayer == null) {
-          _toneDangPlayer = new System.Media.SoundPlayer(CreateToneStream(784.0, 0.18, 12.0));
-          _toneDangPlayer.Load();
-        }
-        _toneDangPlayer.Play();
-        DebugLog("TONE_DANG");
-      } catch { }
-    }
-
-    /// <summary>生成短提示音 WAV：freq 频率、seconds 时长、decay 衰减速度（叮=高频快衰减，当=低频慢衰减）</summary>
-    private static System.IO.Stream CreateToneStream(double freq, double seconds, double decay) {
-      int sampleRate = 22050;
-      int n = (int)(sampleRate * seconds);
-      byte[] buf;
-      using (System.IO.MemoryStream ms = new System.IO.MemoryStream()) {
-        using (System.IO.BinaryWriter bw = new System.IO.BinaryWriter(ms, System.Text.Encoding.ASCII, true)) {
-          int dataSize = n * 2;
-          bw.Write(System.Text.Encoding.ASCII.GetBytes("RIFF"));
-          bw.Write(36 + dataSize);
-          bw.Write(System.Text.Encoding.ASCII.GetBytes("WAVE"));
-          bw.Write(System.Text.Encoding.ASCII.GetBytes("fmt "));
-          bw.Write(16);
-          bw.Write((short)1);
-          bw.Write((short)1);
-          bw.Write(sampleRate);
-          bw.Write(sampleRate * 2);
-          bw.Write((short)2);
-          bw.Write((short)16);
-          bw.Write(System.Text.Encoding.ASCII.GetBytes("data"));
-          bw.Write(dataSize);
-          for (int i = 0; i < n; i++) {
-            double t = (double)i / sampleRate;
-            double env = Math.Exp(-t * decay);
-            double v = Math.Sin(2 * Math.PI * freq * t) * env * 0.55;
-            bw.Write((short)(v * short.MaxValue));
-          }
-        }
-        buf = ms.ToArray();
-      }
-      return new System.IO.MemoryStream(buf, false);
     }
 
     private string BuildChord(KeyHookEventArgs e) {
