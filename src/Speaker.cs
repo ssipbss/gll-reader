@@ -9,7 +9,7 @@ using System.Runtime.InteropServices.WindowsRuntime;
 
 namespace GenDaLangDu {
   public sealed class Speaker : IDisposable {
-    private enum ItemKind { SpeakZh, SpeakEn, SpeakEnWord, SpeakEnSsml, SpeakKeySound, SetVoices, Cancel, Stop }
+    private enum ItemKind { SpeakZh, SpeakEn, SpeakEnWord, SpeakEnSsml, SetVoices, Cancel, Stop }
 
     private sealed class WorkItem {
       public ItemKind Kind;
@@ -36,8 +36,6 @@ namespace GenDaLangDu {
     private volatile bool _enIsRt;
     private volatile bool _speaking;
     private static CancellationTokenSource _rtCancel = new CancellationTokenSource();
-    private readonly System.Collections.Generic.Dictionary<string, System.Media.SoundPlayer> _soundPlayers =
-      new System.Collections.Generic.Dictionary<string, System.Media.SoundPlayer>();
 
     public Action<string> Log { get; set; }
 
@@ -159,14 +157,6 @@ namespace GenDaLangDu {
               enSsmls.Add(new System.Collections.Generic.KeyValuePair<string, string>(it.Text, it.Ssml));
             }
             break;
-          case ItemKind.SpeakKeySound:
-            /* 按键音效严格排队：先把已经排在前面的语音念完，再播音效（谁先打先念谁） */
-            if (!cancelled) {
-              FlushBatchSpeech(zh, enPending, enWords, enSsmls);
-              if (Log != null) Log("KEY_SOUND_Q [" + it.Text + "]");
-              PlaySoundSync(it.Text);
-            }
-            break;
           case ItemKind.SetVoices:
             try {
               ApplyVoices(_zhVoice, _enVoice);
@@ -199,7 +189,7 @@ namespace GenDaLangDu {
       int speakCount = 0;
       foreach (WorkItem it in items) {
         if (it.Kind == ItemKind.SpeakZh || it.Kind == ItemKind.SpeakEn ||
-            it.Kind == ItemKind.SpeakEnWord || it.Kind == ItemKind.SpeakKeySound) speakCount++;
+            it.Kind == ItemKind.SpeakEnWord) speakCount++;
       }
       _prevBatchCount = speakCount;
 
@@ -243,19 +233,6 @@ namespace GenDaLangDu {
         else SpeakSync(_en, plain, "EN", ref _lastRateEn, ref _lastVolumeEn, enRate, false, ssml);
       }
       enSsmls.Clear();
-    }
-
-    private void PlaySoundSync(string path) {
-      try {
-        if (string.IsNullOrEmpty(path)) return;
-        System.Media.SoundPlayer p;
-        if (!_soundPlayers.TryGetValue(path, out p)) {
-          p = new System.Media.SoundPlayer(path);
-          p.Load();
-          _soundPlayers[path] = p;
-        }
-        p.PlaySync();
-      } catch { }
     }
 
     private static System.Media.SoundPlayer _currentPlayer;
@@ -642,14 +619,6 @@ namespace GenDaLangDu {
       _queue.Add(new WorkItem { Kind = ItemKind.SpeakEnSsml, Text = plain, Ssml = ssml });
     }
 
-    /// <summary>按键音效入朗读队列，严格按先来后到播报，绝不插队。</summary>
-    public void SpeakKeySound(string path) {
-      if (string.IsNullOrEmpty(path)) return;
-      if (Log != null) Log("KEY_SOUND_ENQ [" + System.IO.Path.GetFileName(path) + "]");
-      _prevEnqueueAt = _lastEnqueueAt;
-      _lastEnqueueAt = DateTime.Now;
-      _queue.Add(new WorkItem { Kind = ItemKind.SpeakKeySound, Text = path });
-    }
 
     public void FlushAll() { }
 

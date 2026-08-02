@@ -63,9 +63,12 @@ namespace GenDaLangDu {
     private string _pendingModName = null;
     private uint _pendingModVk = 0;
     private System.Windows.Forms.Timer _modTimer;
-    private const string EnterSoundPath = @"C:\Windows\Media\Windows Notify System Generic.wav";
     private const string BackspaceSoundPath = @"C:\Windows\Media\Windows Ding.wav";
     private const string SpaceSoundPath = @"C:\Windows\Media\Windows Critical Stop.wav";
+    private System.Collections.Generic.Dictionary<string, System.Media.SoundPlayer> _keySoundPlayers =
+      new System.Collections.Generic.Dictionary<string, System.Media.SoundPlayer>();
+    private string _pendingKeySoundPath = null;
+    private DateTime _pendingKeySoundAt = DateTime.MinValue;
     private DateTime _lastPacketCjkAt = DateTime.MinValue;
     private bool _selfElevated;
     private DateTime _lastElevationAskAt = DateTime.MinValue;
@@ -119,7 +122,7 @@ namespace GenDaLangDu {
 
       _imeTimer = new System.Windows.Forms.Timer();
       _imeTimer.Interval = 25;
-      _imeTimer.Tick += delegate { CheckIme(); _speaker.FlushAll(); };
+      _imeTimer.Tick += delegate { CheckIme(); _speaker.FlushAll(); CheckPendingKeySound(); };
 
       _uiTimer = new System.Windows.Forms.Timer();
       _uiTimer.Interval = 100;
@@ -655,8 +658,8 @@ namespace GenDaLangDu {
           else if (e.Vk == 0x08 || e.Vk == 0x2E) {
             _lastDeleteAt = DateTime.Now;
             if (e.Vk == 0x08) {
-              /* 退格键：系统提示音，每次按键都响 */
-              _speaker.SpeakKeySound(BackspaceSoundPath);
+              /* 退格键：系统提示音，中文朗读时让路 */
+              RequestKeySound(BackspaceSoundPath);
             } else if ((DateTime.Now - _lastDeleteSpeakAt).TotalMilliseconds < 800) {
               DebugLog("DELETE_COALESCE vk=0x" + e.Vk.ToString("X"));
             } else {
@@ -669,11 +672,8 @@ namespace GenDaLangDu {
             bool commitRace = _lastZhCommitAt != DateTime.MinValue &&
                               (DateTime.Now - _lastZhCommitAt).TotalMilliseconds < 80;
             if (!commitRace) {
-              _speaker.SpeakKeySound(SpaceSoundPath);
+              RequestKeySound(SpaceSoundPath);
             }
-          } else if (e.Vk == 0x0D) {
-            /* 回车键：系统提示音 */
-            _speaker.SpeakKeySound(EnterSoundPath);
           } else {
             string en = KeyTranslator.GetKeyNameEn(e.Vk);
             _speaker.SpeakEnWord(en != null ? en : keyName);
@@ -1441,6 +1441,44 @@ namespace GenDaLangDu {
       _pendingModName = null;
       _pendingModVk = 0;
       if (_modTimer != null) _modTimer.Stop();
+    }
+
+    private void PlayKeySound(string path) {
+      try {
+        if (string.IsNullOrEmpty(path)) return;
+        System.Media.SoundPlayer p;
+        if (!_keySoundPlayers.TryGetValue(path, out p)) {
+          p = new System.Media.SoundPlayer(path);
+          p.Load();
+          _keySoundPlayers[path] = p;
+        }
+        p.Play();
+        DebugLog("KEY_SOUND [" + System.IO.Path.GetFileName(path) + "]");
+      } catch { }
+    }
+
+    /// <summary>按键音效让路：中文语音正在念/排队时不立即响，等念完再响；
+    /// 连续按键只保留最近一次，避免音效堆积。</summary>
+    private void RequestKeySound(string path) {
+      if (_speaker.IsBusy) {
+        _pendingKeySoundPath = path;
+        _pendingKeySoundAt = DateTime.Now;
+        DebugLog("KEY_SOUND_DEFER [" + System.IO.Path.GetFileName(path) + "]");
+        return;
+      }
+      PlayKeySound(path);
+    }
+
+    private void CheckPendingKeySound() {
+      if (_pendingKeySoundPath == null) return;
+      if (_speaker.IsBusy) return;
+      string path = _pendingKeySoundPath;
+      _pendingKeySoundPath = null;
+      if ((DateTime.Now - _pendingKeySoundAt).TotalMilliseconds > 1500) {
+        DebugLog("KEY_SOUND_STALE_DROP");
+        return;
+      }
+      PlayKeySound(path);
     }
 
     private string BuildChord(KeyHookEventArgs e) {
