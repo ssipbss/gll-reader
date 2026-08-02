@@ -219,6 +219,8 @@ namespace GenDaLangDu {
         if (Log != null) Log("EN_MERGE [" + enText + "] word=" + (asWord ? 1 : 0));
         int enRate = Math.Max(-10, _rate - 2);
         if (asWord) enRate = Math.Min(10, enRate + 3);
+        /* 字母放慢到比中文慢4档：短元音字母（E/I/O/A）念得更完整、更清晰 */
+        else enRate = Math.Max(-10, _rate - 4);
         if (_enIsRt && _enRt != null) SpeakRtSync(_enRt, enText, "EN", enRate, !asWord);
         else SpeakSync(_en, enText, "EN", ref _lastRateEn, ref _lastVolumeEn, enRate, !asWord);
       }
