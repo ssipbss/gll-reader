@@ -11,7 +11,8 @@ class EnPassTest {
   }
 
   private static EnPassTracker NewTracker() {
-    EnPassTracker t = new EnPassTracker(300);
+    /* 确认等待300ms、低字母过期清理300ms（测试用小窗口） */
+    EnPassTracker t = new EnPassTracker(300, 300);
     _confirmed = null;
     t.Confirmed += delegate(string s) { _confirmed = s; };
     return t;
@@ -36,8 +37,23 @@ class EnPassTest {
     t.Note("l", "el1");
     t.Note("l", "el1");
     t.Note("o", "el1");
-    Check(_confirmed == "hello", "超过4个字母立即确认英文");
+    Check(_confirmed == null, "超过4个字母但未停顿不立即确认");
+    System.Threading.Thread.Sleep(400);
+    Check(t.Check() == true, "超过4个字母+停顿后确认英文");
+    Check(_confirmed == "hello", "确认事件携带完整字母");
     Check(!t.IsArmed, "确认后清空");
+
+    /* 拼音码场景：shenme 累积超过4个字母，但上屏中文会取消，不误读 */
+    t = NewTracker();
+    t.Note("s", "el1");
+    t.Note("h", "el1");
+    t.Note("e", "el1");
+    t.Note("n", "el1");
+    t.Note("m", "el1");
+    t.Note("e", "el1");
+    t.Cancel("zh");
+    System.Threading.Thread.Sleep(400);
+    Check(t.Check() == false && _confirmed == null, "拼音码上屏中文后取消，不误读");
 
     t = NewTracker();
     t.Note("d", "el1");

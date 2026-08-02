@@ -79,7 +79,6 @@ namespace GenDaLangDu {
     private uint _shiftTapPid;
     private EnPassTracker _enPassTracker = new EnPassTracker();
     private bool _lastImcChinese = true;
-    private DateTime _lastPacketLetterAt = DateTime.MinValue;
     private readonly System.Text.StringBuilder _packetZhBuffer = new System.Text.StringBuilder();
     private System.Windows.Forms.Timer _packetZhTimer;
     private const int PacketZhMergeMs = 150;
@@ -734,7 +733,6 @@ namespace GenDaLangDu {
       if (!string.IsNullOrEmpty(chars)) {
         foreach (char c in chars) {
           if (KeyTranslator.IsLatinLetter(c)) {
-            if (e.Vk == 0xE7) _lastPacketLetterAt = DateTime.Now;
             if ((chineseMode || _composing) && !ShiftOrCaps() && !ImeEnglishNow) {
               _composing = true;
               _lastPinyinKeyAt = DateTime.Now;
@@ -915,10 +913,8 @@ namespace GenDaLangDu {
     private bool TrySpeakInserted(string ins) {
       if (string.IsNullOrEmpty(ins)) return false;
       /* 鼠标切英文的直通字母：记忆状态仍是中文时，先按"候选"缓冲，
-         若短时间后没有被中文替换（五笔组字上屏）则确认英文并朗读。
-         输入法投递的字母（VK_PACKET，拼音/五笔组字码）不进入候选 */
-      bool imeCodeRecent = (DateTime.Now - _lastPacketLetterAt).TotalMilliseconds < 500;
-      if (!ImeEnglishNow && IsPureAsciiLetters(ins) && !imeCodeRecent) {
+         超过4个字母且停顿后未被中文替换（拼音/五笔组字上屏）则确认英文并朗读 */
+      if (!ImeEnglishNow && IsPureAsciiLetters(ins)) {
         if (_enPassTracker.Note(ins, _lastUiElement)) return false;
       }
       /* 退格/删除后1秒内，若期间没有新的按键，差异不朗读（删除不会产生新增，误读的'插入'不可信）；
