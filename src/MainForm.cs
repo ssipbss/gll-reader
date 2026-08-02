@@ -79,6 +79,10 @@ namespace GenDaLangDu {
     private uint _shiftTapPid;
     private EnPassTracker _enPassTracker = new EnPassTracker();
     private bool _lastImcChinese = true;
+    private DateTime _lastPacketLetterAt = DateTime.MinValue;
+    private readonly System.Text.StringBuilder _packetZhBuffer = new System.Text.StringBuilder();
+    private System.Windows.Forms.Timer _packetZhTimer;
+    private const int PacketZhMergeMs = 150;
     private bool _closingByTrayExit;
     private bool _loading;
     private bool _forceDebug;
@@ -191,6 +195,9 @@ namespace GenDaLangDu {
           SimulateKey(0x10);
           System.Threading.Thread.Sleep(120);
           SimulateKeyUp(0x10);
+          /* VK_PACKET 逐字投递汉字：应合并成"什么"一次朗读 */
+          SimulatePacket('什');
+          SimulatePacket('么');
           LogTest("SIMULATE_DONE");
         };
         _injectTimer.Start();
@@ -233,6 +240,10 @@ namespace GenDaLangDu {
     private void SimulateKeyUp(uint vk) {
       ushort scan = InputSender.ScanOf((ushort)vk);
       OnKey(this, new KeyHookEventArgs { Vk = vk, Scan = scan, IsUp = true, IsSysKey = false });
+    }
+
+    private void SimulatePacket(char c) {
+      OnKey(this, new KeyHookEventArgs { Vk = 0xE7, Scan = (uint)c, IsUp = false, IsSysKey = false });
     }
 
     private void ParseArgs(string[] args) {
@@ -723,6 +734,7 @@ namespace GenDaLangDu {
       if (!string.IsNullOrEmpty(chars)) {
         foreach (char c in chars) {
           if (KeyTranslator.IsLatinLetter(c)) {
+            if (e.Vk == 0xE7) _lastPacketLetterAt = DateTime.Now;
             if ((chineseMode || _composing) && !ShiftOrCaps() && !ImeEnglishNow) {
               _composing = true;
               _lastPinyinKeyAt = DateTime.Now;
@@ -753,8 +765,7 @@ namespace GenDaLangDu {
             bool diffAlreadySpoke = c.ToString() == _lastDiffCommitText &&
                                     (DateTime.Now - _lastDiffCommitAt).TotalMilliseconds < 600;
             if (!diffAlreadySpoke && !(TsfHook.IsActive && TextReader.IsTsfCoveredForeground())) {
-              SpeakZh(c.ToString());
-              RememberSpoken(c.ToString());
+              BufferPacketZh(c);
             }
             continue;
           }
@@ -863,6 +874,31 @@ namespace GenDaLangDu {
       if (_speaker != null) _speaker.SpeakZh(text);
     }
 
+    /// <summary>VK_PACKET 逐字投递的汉字先短缓冲：150ms 内连续到达的
+    /// 多字合并成词朗读（"什""么"→"什么"），避免一字一顿和多音字误读。</summary>
+    private void BufferPacketZh(char c) {
+      if (_packetZhTimer == null) {
+        _packetZhTimer = new System.Windows.Forms.Timer();
+        _packetZhTimer.Interval = PacketZhMergeMs;
+        _packetZhTimer.Tick += delegate { FlushPacketZh(); };
+      }
+      _packetZhBuffer.Append(c);
+      _packetZhTimer.Stop();
+      _packetZhTimer.Start();
+    }
+
+    private void FlushPacketZh() {
+      if (_packetZhTimer != null) _packetZhTimer.Stop();
+      if (_packetZhBuffer.Length == 0) return;
+      string text = _packetZhBuffer.ToString();
+      _packetZhBuffer.Clear();
+      if (string.IsNullOrEmpty(text)) return;
+      if (RecentlySpoken(text)) return;
+      SpeakZh(text);
+      RememberSpoken(text);
+      DebugLog("VK_PACKET_ZH_MERGE [" + text + "]");
+    }
+
     private bool RecentlySpoken(string text) {
       if (_lastSpoken != text) return false;
       if ((DateTime.Now - _lastSpokenAt).TotalMilliseconds >= 400) return false;
@@ -879,8 +915,10 @@ namespace GenDaLangDu {
     private bool TrySpeakInserted(string ins) {
       if (string.IsNullOrEmpty(ins)) return false;
       /* 鼠标切英文的直通字母：记忆状态仍是中文时，先按"候选"缓冲，
-         若短时间后没有被中文替换（五笔组字上屏）则确认英文并朗读 */
-      if (!ImeEnglishNow && IsPureAsciiLetters(ins)) {
+         若短时间后没有被中文替换（五笔组字上屏）则确认英文并朗读。
+         输入法投递的字母（VK_PACKET，拼音/五笔组字码）不进入候选 */
+      bool imeCodeRecent = (DateTime.Now - _lastPacketLetterAt).TotalMilliseconds < 500;
+      if (!ImeEnglishNow && IsPureAsciiLetters(ins) && !imeCodeRecent) {
         if (_enPassTracker.Note(ins, _lastUiElement)) return false;
       }
       /* 退格/删除后1秒内，若期间没有新的按键，差异不朗读（删除不会产生新增，误读的'插入'不可信）；
