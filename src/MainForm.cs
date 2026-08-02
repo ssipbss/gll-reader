@@ -51,6 +51,8 @@ namespace GenDaLangDu {
     private DateTime _lastDeleteAt = DateTime.MinValue;
     private DateTime _lastZhCommitAt = DateTime.MinValue;
     private DateTime _lastTsfCommitAt = DateTime.MinValue;
+    private DateTime _pendingSpaceAt = DateTime.MinValue;
+    private System.Windows.Forms.Timer _spaceTimer;
     private DateTime _lastPacketCjkAt = DateTime.MinValue;
     private bool _selfElevated;
     private DateTime _lastElevationAskAt = DateTime.MinValue;
@@ -607,6 +609,16 @@ namespace GenDaLangDu {
               _lastDeleteSpeakAt = DateTime.Now;
               SpeakZh(keyName);
             }
+          } else if (e.Vk == 0x20) {
+            /* 空格可能是中文上屏键：延迟350ms，若随后有中文提交则取消，避免把上屏空格当功能键读 */
+            _pendingSpaceAt = DateTime.Now;
+            if (_spaceTimer == null) {
+              _spaceTimer = new System.Windows.Forms.Timer();
+              _spaceTimer.Interval = 350;
+              _spaceTimer.Tick += delegate { FlushPendingSpace(); };
+            }
+            _spaceTimer.Stop();
+            _spaceTimer.Start();
           } else {
             SpeakZh(keyName);
           }
@@ -704,6 +716,7 @@ namespace GenDaLangDu {
           else delta = r;
           _lastResult = r;
           if (!string.IsNullOrEmpty(delta) && !RecentlySpoken(delta)) {
+            CancelPendingSpace();
             SpeakZh(delta);
             RememberSpoken(delta);
             DebugLog("IME_RESULT [" + delta + "]");
@@ -1228,9 +1241,24 @@ namespace GenDaLangDu {
     }
 
     private void MarkChineseCommit() {
+      CancelPendingSpace();
       _imeEnglishMode = false;
       _lastChineseCommitAt = DateTime.Now;
       _lastZhCommitAt = DateTime.Now;
+    }
+
+    private void FlushPendingSpace() {
+      if (_spaceTimer != null) _spaceTimer.Stop();
+      if (_pendingSpaceAt == DateTime.MinValue) return;
+      _pendingSpaceAt = DateTime.MinValue;
+      if (RecentlySpoken("空格")) return;
+      SpeakZh("空格");
+      RememberSpoken("空格");
+    }
+
+    private void CancelPendingSpace() {
+      _pendingSpaceAt = DateTime.MinValue;
+      if (_spaceTimer != null) _spaceTimer.Stop();
     }
 
     private static bool ShiftOrCaps() {
