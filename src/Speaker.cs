@@ -34,6 +34,7 @@ namespace GenDaLangDu {
     private SpeechSynthesizer _enRt;
     private volatile bool _zhIsRt;
     private volatile bool _enIsRt;
+    private volatile bool _speaking;
     private static CancellationTokenSource _rtCancel = new CancellationTokenSource();
 
     public Action<string> Log { get; set; }
@@ -46,6 +47,11 @@ namespace GenDaLangDu {
     public int Volume {
       get { return _volume; }
       set { _volume = value; }
+    }
+
+    /// <summary>是否有语音正在朗读或排队（按键音效据此让路，避免覆盖中文朗读）</summary>
+    public bool IsBusy {
+      get { return _speaking || _queue.Count > 0; }
     }
 
     public Speaker() {
@@ -93,6 +99,15 @@ namespace GenDaLangDu {
     }
 
     private void ProcessBatch(WorkItem first) {
+      _speaking = true;
+      try {
+        ProcessBatchCore(first);
+      } finally {
+        _speaking = false;
+      }
+    }
+
+    private void ProcessBatchCore(WorkItem first) {
       Diag("W_BATCH kind=" + first.Kind);
       List<WorkItem> items = new List<WorkItem>();
       items.Add(first);
