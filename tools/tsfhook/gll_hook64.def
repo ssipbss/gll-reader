@@ -1,0 +1,6 @@
+LIBRARY gll_hook64.dll
+EXPORTS
+GllInstallHook
+GllUninstallHook
+GllSetDebug
+GllIsComposing

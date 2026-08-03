@@ -134,6 +134,11 @@ namespace GenDaLangDu {
     private AutomationFocusChangedEventHandler _selectionFocusHandler;
     private AutomationEventHandler _selectionChangedHandler;
     private AutomationElement _selectionSubscribedElement;
+    private TsfBridge _tsfBridge;
+    private TsfNotifyWindow _tsfNotifyWindow;
+    private readonly HashSet<uint> _tsfActivePids = new HashSet<uint>();
+    private readonly Dictionary<uint, DateTime> _tsfCommitAt = new Dictionary<uint, DateTime>();
+    private Process _hook32Host;
 
     public MainForm(string[] args) {
       _loading = true;
@@ -182,6 +187,10 @@ namespace GenDaLangDu {
       _hbTimer.Interval = 30000;
       _hbTimer.Tick += delegate {
         DebugLog("HB");
+        if (_listening && _tsfBridge != null && !_tsfBridge.Installed) {
+          DebugLog("TSF_HOOK_RESTART");
+          StartTsfHook();
+        }
         if (_listening && (!_hook.IsInstalled || !_hook.IsHookThreadAlive)) {
           DebugLog("HOOK_RESTART");
           try { _hook.Install(); } catch { }
@@ -625,6 +634,7 @@ namespace GenDaLangDu {
       _listening = _hook.IsInstalled;
       if (_listening) {
         _mouseHook.Install();
+        StartTsfHook();
         _lastResult = "";
         _lastUiText = null;
         _imeTimer.Start();
@@ -639,6 +649,7 @@ namespace GenDaLangDu {
       _listening = false;
       _hook.Uninstall();
       _mouseHook.Uninstall();
+      StopTsfHook();
       _imeTimer.Stop();
       _uiTimer.Stop();
       _elevTimer.Stop();
@@ -652,6 +663,131 @@ namespace GenDaLangDu {
       _btnToggle.Text = _listening ? "暂停监听" : "开始监听";
       _statusPill.Active = _listening;
       _statusPill.Invalidate();
+    }
+
+    private void StartTsfHook() {
+      try {
+        if (_tsfNotifyWindow == null) {
+          _tsfNotifyWindow = new TsfNotifyWindow();
+          _tsfNotifyWindow.CommitReceived += OnTsfCommit;
+          _tsfNotifyWindow.StateReceived += OnTsfState;
+          _tsfNotifyWindow.Create();
+        }
+        if (_tsfBridge == null) {
+          _tsfBridge = new TsfBridge();
+          string dll = Path.Combine(Application.StartupPath, "gll_hook64.dll");
+          try {
+            string ptr = Path.Combine(Application.StartupPath, "gll_hook64.txt");
+            if (File.Exists(ptr)) {
+              string name = File.ReadAllText(ptr).Trim();
+              if (!string.IsNullOrEmpty(name)) dll = Path.Combine(Application.StartupPath, name);
+            }
+          } catch { }
+          CleanupOldHookDlls("gll_hook64_", dll);
+          string dlls = "";
+          try {
+            dlls = string.Join("|", Directory.GetFiles(Application.StartupPath, "*.dll"));
+          } catch (Exception ex2) {
+            dlls = "enum-err:" + ex2.Message;
+          }
+          DebugLog("TSF_HOOK diag cwd=[" + Environment.CurrentDirectory + "] base=[" +
+                   AppDomain.CurrentDomain.BaseDirectory + "] full=[" +
+                   Path.GetFullPath(dll) + "] exists=" + File.Exists(Path.GetFullPath(dll)) +
+                   " bits=" + (IntPtr.Size * 8) + " dlls=[" + dlls + "]");
+          bool ok = _tsfBridge.Install(dll, _settings.DebugLog);
+          DebugLog("TSF_HOOK install=" + ok + " err=[" + _tsfBridge.LastError + "] dll=" + dll);
+        }
+        StartHook32Host();
+      } catch (Exception ex) {
+        DebugLog("TSF_HOOK_START_ERR " + ex.Message);
+      }
+    }
+
+    private static void CleanupOldHookDlls(string prefix, string current) {
+      try {
+        string dir = Path.GetDirectoryName(current);
+        if (string.IsNullOrEmpty(dir)) return;
+        foreach (string f in Directory.GetFiles(dir, prefix + "*.dll")) {
+          if (!f.Equals(current, StringComparison.OrdinalIgnoreCase)) {
+            try { File.Delete(f); } catch { }
+          }
+        }
+      } catch { }
+    }
+
+    private void StartHook32Host() {
+      try {
+        if (_hook32Host != null && !_hook32Host.HasExited) return;
+        string host = Path.Combine(Application.StartupPath, "gll_hook32_host.exe");
+        if (!File.Exists(host)) return;
+        ProcessStartInfo psi = new ProcessStartInfo(host, "--parent " + Process.GetCurrentProcess().Id);
+        psi.WindowStyle = ProcessWindowStyle.Hidden;
+        psi.CreateNoWindow = true;
+        psi.UseShellExecute = false;
+        _hook32Host = Process.Start(psi);
+        DebugLog("HOOK32_HOST started");
+      } catch (Exception ex) {
+        DebugLog("HOOK32_HOST_ERR " + ex.Message);
+      }
+    }
+
+    private void StopTsfHook() {
+      try {
+        if (_hook32Host != null) {
+          try {
+            if (!_hook32Host.HasExited) _hook32Host.Kill();
+          } catch { }
+          _hook32Host = null;
+        }
+        if (_tsfBridge != null) {
+          _tsfBridge.Dispose();
+          _tsfBridge = null;
+        }
+      } catch { }
+    }
+
+    private void OnTsfCommit(uint pid, string text) {
+      try {
+        if (!_listening) return;
+        if (string.IsNullOrEmpty(text)) return;
+        _tsfActivePids.Add(pid);
+        _tsfCommitAt[pid] = DateTime.Now;
+        if (_tsfActivePids.Count > 96) {
+          List<uint> dead = new List<uint>();
+          foreach (KeyValuePair<uint, DateTime> kv in _tsfCommitAt) {
+            if ((DateTime.Now - kv.Value).TotalMilliseconds > 600000) dead.Add(kv.Key);
+          }
+          foreach (uint d in dead) {
+            _tsfCommitAt.Remove(d);
+            _tsfActivePids.Remove(d);
+          }
+        }
+        if (!HasChineseText(text)) return;
+        /* TSF 是权威通道：清掉可能正在缓冲的 VK_PACKET 同文，避免双读 */
+        if (_packetZhBuffer.Length > 0) {
+          _packetZhBuffer.Clear();
+          if (_packetZhTimer != null) _packetZhTimer.Stop();
+          DebugLog("TSF_CANCEL_PACKET_BUFFER");
+        }
+        CancelPendingSpace();
+        if (!RecentlySpoken(text)) {
+          SpeakZh(text);
+          RememberSpoken(text);
+        }
+        MarkChineseCommit();
+        _lastDiffCommitText = text;
+        _lastDiffCommitAt = DateTime.Now;
+        DebugLog("TSF_COMMIT pid=" + pid + " [" + text + "]");
+      } catch (Exception ex) {
+        DebugLog("TSF_COMMIT_ERR " + ex.Message);
+      }
+    }
+
+    private void OnTsfState(uint pid, bool composing) {
+      try {
+        if (!_listening) return;
+        DebugLog("TSF_STATE pid=" + pid + " composing=" + composing);
+      } catch { }
     }
 
     private void OnKey(object sender, KeyHookEventArgs e) {
@@ -673,6 +809,21 @@ namespace GenDaLangDu {
         return;
       }
       if (e.IsAutoRepeat) return;
+      /* TSF/IMM 输入法正在组字（共享内存实时状态）：字母/数字/标点/上屏键全部静默，
+         只等输入法上屏事件朗读，绝不读未上屏的码与候选 */
+      uint tsfPid = CurrentForegroundPid();
+      if (_tsfBridge != null && _tsfBridge.IsComposing(tsfPid)) {
+        _lastKeyAt = DateTime.Now;
+        bool shiftDown = e.Vk == 0x10 || e.Vk == 0xA0 || e.Vk == 0xA1;
+        if (shiftDown) {
+          _shiftTapArmed = true;
+          _shiftDownAt = DateTime.Now;
+          _shiftTapPid = tsfPid;
+          _shiftSpeakPending = false;
+        }
+        DebugLog("KEY_SUPPRESS_TSF vk=0x" + e.Vk.ToString("X") + " pid=" + tsfPid);
+        return;
+      }
       if (e.Vk == 0x08 || e.Vk == 0x2E) {
         _enPassTracker.Cancel("del");
       } else {
@@ -884,7 +1035,12 @@ namespace GenDaLangDu {
             _lastPacketCjkAt = DateTime.Now;
             bool diffAlreadySpoke = c.ToString() == _lastDiffCommitText &&
                                     (DateTime.Now - _lastDiffCommitAt).TotalMilliseconds < 600;
-            if (!diffAlreadySpoke && !TextReader.IsKnownSlowApp()) {
+            uint pktPid = _appStates.CurrentPid != 0 ? _appStates.CurrentPid : CurrentForegroundPid();
+            DateTime pktTsfAt;
+            bool pktTsfActive = _tsfActivePids.Contains(pktPid) &&
+                                _tsfCommitAt.TryGetValue(pktPid, out pktTsfAt);
+            if (!diffAlreadySpoke && !TextReader.IsKnownSlowApp() &&
+                !pktTsfActive) {
               BufferPacketZh(c);
             }
             continue;
@@ -1026,6 +1182,11 @@ namespace GenDaLangDu {
       string text = _packetZhBuffer.ToString();
       _packetZhBuffer.Clear();
       if (string.IsNullOrEmpty(text)) return;
+      if (text == _lastDiffCommitText &&
+          (DateTime.Now - _lastDiffCommitAt).TotalMilliseconds < 800) {
+        DebugLog("VK_PACKET_ZH_MERGE_SKIP tsf");
+        return;
+      }
       if (RecentlySpoken(text)) return;
       SpeakZh(text);
       RememberSpoken(text);
@@ -1048,6 +1209,23 @@ namespace GenDaLangDu {
 
     private bool TrySpeakInserted(string ins) {
       if (string.IsNullOrEmpty(ins)) return false;
+      uint pid0 = CurrentForegroundPid();
+      if (_tsfBridge != null && _tsfBridge.IsComposing(pid0)) {
+        DebugLog("UI_INSERT_SKIP tsf_composing");
+        return false;
+      }
+      DateTime tsfAt0;
+      if (_tsfActivePids.Contains(pid0) && _tsfCommitAt.TryGetValue(pid0, out tsfAt0)) {
+        double since0 = (DateTime.Now - tsfAt0).TotalMilliseconds;
+        if (since0 < 1500) {
+          DebugLog("UI_INSERT_SKIP tsf_recent");
+          return false;
+        }
+        if (since0 < 300000) {
+          DebugLog("UI_INSERT_SKIP tsf_authoritative");
+          return false;
+        }
+      }
       /* 鼠标切英文的直通字母：记忆状态仍是中文时，先按"候选"缓冲，
          超过4个字母且停顿后未被中文替换（拼音/五笔组字上屏）则确认英文并朗读 */
       if (!ImeEnglishNow && IsPureAsciiLetters(ins)) {
@@ -1738,6 +1916,11 @@ namespace GenDaLangDu {
     private void CheckUiText() {
       if (!_listening) return;
       if (!_testMode && IsOurProcessForeground()) return;
+      /* 前台程序未响应时，UIA 调用可能无限期挂起整个界面线程；先探测再轮询 */
+      if (!IsForegroundResponsive()) {
+        DebugLog("UI_SKIP_NOT_RESPONDING");
+        return;
+      }
       /* 空闲降频：没有按键/鼠标活动且不在组字时，文档轮询从 100ms 降到 400ms，
          有输入立即恢复满频，不影响朗读时机。 */
       bool uiActive = (DateTime.Now - _lastKeyAt).TotalMilliseconds < 1500 ||
@@ -1862,6 +2045,32 @@ namespace GenDaLangDu {
         return;
       }
       TrySpeakInserted(inserted);
+    }
+
+    private static uint _respPid;
+    private static bool _respOk = true;
+    private static DateTime _respAt = DateTime.MinValue;
+
+    private static bool IsForegroundResponsive() {
+      try {
+        IntPtr h = Native.GetForegroundWindow();
+        if (h == IntPtr.Zero) return false;
+        uint pid;
+        Native.GetWindowThreadProcessId(h, out pid);
+        if (pid == _respPid && (DateTime.Now - _respAt).TotalMilliseconds < 1000) {
+          return _respOk;
+        }
+        bool ok;
+        using (Process p = Process.GetProcessById((int)pid)) {
+          ok = p.Responding;
+        }
+        _respPid = pid;
+        _respOk = ok;
+        _respAt = DateTime.Now;
+        return ok;
+      } catch {
+        return true;
+      }
     }
 
     private static bool HasChineseText(string s) {
@@ -2558,6 +2767,11 @@ namespace GenDaLangDu {
       }
       SaveSettings();
       StopListening();
+      StopTsfHook();
+      if (_tsfNotifyWindow != null) {
+        try { _tsfNotifyWindow.Dispose(); } catch { }
+        _tsfNotifyWindow = null;
+      }
       if (_imeTimer != null) _imeTimer.Stop();
       if (_uiTimer != null) _uiTimer.Stop();
       if (_elevTimer != null) _elevTimer.Stop();
