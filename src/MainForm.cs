@@ -110,6 +110,9 @@ namespace GenDaLangDu {
     private readonly System.Text.StringBuilder _packetZhBuffer = new System.Text.StringBuilder();
     private System.Windows.Forms.Timer _packetZhTimer;
     private const int PacketZhMergeMs = 150;
+    private readonly System.Text.StringBuilder _tsfLetterBuf = new System.Text.StringBuilder();
+    private System.Windows.Forms.Timer _tsfLetterTimer;
+    private uint _tsfLetterPid;
     private bool _closingByTrayExit;
     private bool _loading;
     private bool _forceDebug;
@@ -795,6 +798,13 @@ namespace GenDaLangDu {
         if (!HasChineseText(text)) return;
         /* 中文已上屏 = 组字结束：立即清除内部组字标记，否则紧接的数字会被当成候选键静音 */
         _composing = false;
+        /* 缓冲中的字母是编码（已随上屏提交），取消朗读 */
+        if (_tsfLetterBuf.Length > 0) {
+          _tsfLetterBuf.Clear();
+          if (_tsfLetterTimer != null) _tsfLetterTimer.Stop();
+          _tsfLetterPid = 0;
+          DebugLog("TSF_LETTER_CANCEL_BY_COMMIT");
+        }
         /* TSF 是权威通道：清掉可能正在缓冲的 VK_PACKET 同文，避免双读 */
         if (_packetZhBuffer.Length > 0) {
           _packetZhBuffer.Clear();
@@ -857,8 +867,13 @@ namespace GenDaLangDu {
           _shiftTapArmed = false;
           _shiftSpeakPending = false;
         }
-        DebugLog("KEY_SUPPRESS_TSF vk=0x" + e.Vk.ToString("X") + " pid=" + tsfPid);
-        return;
+        bool isLetterKey = e.Vk >= 0x41 && e.Vk <= 0x5A;
+        if (isLetterKey && ShiftOrCaps()) {
+          /* 长按 Shift 输入英文：字母直接上屏，即使 TSF 标记组字也不压制 */
+        } else {
+          DebugLog("KEY_SUPPRESS_TSF vk=0x" + e.Vk.ToString("X") + " pid=" + tsfPid);
+          return;
+        }
       }
       if (e.Vk == 0x08 || e.Vk == 0x2E) {
         _enPassTracker.Cancel("del");
@@ -1046,22 +1061,30 @@ namespace GenDaLangDu {
             uint ltrPid = _appStates.CurrentPid != 0 ? _appStates.CurrentPid : CurrentForegroundPid();
             bool tsfActiveNow = _tsfActivePids.Contains(ltrPid);
             bool tsfCompNow = _tsfBridge != null && _tsfBridge.IsComposing(ltrPid);
-            if (tsfActiveNow && !tsfCompNow) {
-              /* TSF 权威：没有在组字 = 直接上屏的英文，立即朗读（不再靠记忆猜中英状态） */
+            if (ShiftOrCaps()) {
+              /* 长按 Shift / 大写锁定：直接英文，立即朗读 */
               _lastPinyinKeyAt = DateTime.Now;
               _lastTypingCommitKeyAt = DateTime.Now;
               if (_chkLetters.Checked) _speaker.SpeakEn(lc2.ToString());
-            } else if ((chineseMode || _composing) && !ShiftOrCaps() && !ImeEnglishNow) {
+            } else if (tsfCompNow) {
+              /* TSF 正在组字：编码，不读 */
+              _composing = true;
+              _lastPinyinKeyAt = DateTime.Now;
+              _lastTypingCommitKeyAt = DateTime.Now;
+            } else if (tsfActiveNow) {
+              /* TSF 生效但此刻未组字：可能是编码首字母，也可能真是英文；
+                 缓冲 120ms，由 TSF 稍后状态裁决，绝不猜 */
+              BufferTsfLetter(ltrPid, lc2);
+            } else if ((chineseMode || _composing) && !ImeEnglishNow) {
               _composing = true;
               _lastPinyinKeyAt = DateTime.Now;
               _lastTypingCommitKeyAt = DateTime.Now;
             } else if (_chkLetters.Checked) {
-              char lc = char.ToLowerInvariant(KeyTranslator.NormalizeLatin(c));
               /* 英文模式读字母时也记录打字痕迹：若随后实际有中文上屏（Shift误判），
                  上屏内容仍能通过校验被朗读，并触发英文状态自愈复位 */
               _lastPinyinKeyAt = DateTime.Now;
               _lastTypingCommitKeyAt = DateTime.Now;
-              _speaker.SpeakEn(lc.ToString());
+              _speaker.SpeakEn(lc2.ToString());
             }
             continue;
           }
@@ -1211,6 +1234,38 @@ namespace GenDaLangDu {
 
     /// <summary>VK_PACKET 逐字投递的汉字先短缓冲：150ms 内连续到达的
     /// 多字合并成词朗读（"什""么"→"什么"），避免一字一顿和多音字误读。</summary>
+    /* TSF 生效程序的字母裁决：按下时无法区分“编码首字母”和“直接英文”，
+       缓冲 120ms，若 TSF 开始组字则取消（编码），否则朗读（英文）。 */
+    private void BufferTsfLetter(uint pid, char lc) {
+      if (_tsfLetterPid != pid) {
+        _tsfLetterBuf.Clear();
+        _tsfLetterPid = pid;
+      }
+      _tsfLetterBuf.Append(lc);
+      if (_tsfLetterTimer == null) {
+        _tsfLetterTimer = new System.Windows.Forms.Timer();
+        _tsfLetterTimer.Interval = 120;
+        _tsfLetterTimer.Tick += delegate { FlushTsfLetters(); };
+      }
+      _tsfLetterTimer.Stop();
+      _tsfLetterTimer.Start();
+    }
+
+    private void FlushTsfLetters() {
+      if (_tsfLetterTimer != null) _tsfLetterTimer.Stop();
+      if (_tsfLetterBuf.Length == 0) return;
+      uint pid = _tsfLetterPid;
+      string text = _tsfLetterBuf.ToString();
+      _tsfLetterBuf.Clear();
+      _tsfLetterPid = 0;
+      if (_tsfBridge != null && _tsfBridge.IsComposing(pid)) {
+        DebugLog("TSF_LETTER_CANCEL [" + text + "]");
+        return;
+      }
+      if (_chkLetters.Checked) _speaker.SpeakEn(text);
+      DebugLog("TSF_LETTER_READ [" + text + "]");
+    }
+
     private void BufferPacketZh(char c) {
       if (_packetZhTimer == null) {
         _packetZhTimer = new System.Windows.Forms.Timer();
