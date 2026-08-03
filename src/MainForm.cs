@@ -165,7 +165,8 @@ namespace GenDaLangDu {
       _trayImeIcon.StateConfirmed += OnTrayImeIconState;
 
       _imeTimer = new System.Windows.Forms.Timer();
-      _imeTimer.Interval = 25;
+      /* 50ms 一次足够捕捉 IME 上屏变化，降低后台轮询对系统的打扰 */
+      _imeTimer.Interval = 50;
       _imeTimer.Tick += delegate { CheckIme(); _speaker.FlushAll(); CheckPendingKeySound(); };
 
       _uiTimer = new System.Windows.Forms.Timer();
@@ -1401,8 +1402,6 @@ namespace GenDaLangDu {
       _lastSelectionCheckAt = DateTime.Now;
 
       bool visible = _selectionFloater.Visible;
-      SelectionInfo info = TextReader.GetSelectionInfo();
-      bool hasSel = info != null;
 
       /* 点击按钮本身不隐藏（点击瞬间应用可能已清除选区） */
       bool clickOnButton = (DateTime.Now - _lastMouseDownAt).TotalMilliseconds < 1000 &&
@@ -1424,6 +1423,21 @@ namespace GenDaLangDu {
         return;
       }
 
+      /* 手势：真实拖动 / 双击 / Shift+点击 / Shift+方向键。
+         普通点击、单纯打字、鼠标晃动都不算选择手势，杜绝幽灵按钮。 */
+      bool dragRecent = (DateTime.Now - _lastDragSelectAt).TotalMilliseconds < 2500;
+      bool dblRecent = (DateTime.Now - _lastDblClickAt).TotalMilliseconds < 1500;
+      bool keyRecent = (DateTime.Now - _lastKeyAt).TotalMilliseconds < 1500;
+      bool gesture = dragRecent || dblRecent || (keyRecent && shiftRecent);
+
+      /* 空闲零 UIA：没有选择手势且按钮未显示（或按钮处于查不到选区的兜底模式）时，
+         不向前台应用发 UIA 查询，避免每 150ms 打扰 Word/WPS/资源管理器导致鼠标卡顿 */
+      bool needUia = gesture || (visible && !_selFallback);
+      if (!needUia) return;
+
+      SelectionInfo info = TextReader.GetSelectionInfo();
+      bool hasSel = info != null;
+
       /* UIA 模式下选区消失 → 防抖 200ms 后隐藏；
          WPS 等兜底模式（_selFallback）查不到 UIA 选区，不能靠这个隐藏（否则会闪） */
       if (visible && !_selFallback && !hasSel) {
@@ -1439,12 +1453,6 @@ namespace GenDaLangDu {
       }
       _selGoneSince = DateTime.MinValue;
 
-      /* 手势：真实拖动 / 双击 / Shift+点击 / Shift+方向键。
-         普通点击、单纯打字、鼠标晃动都不算选择手势，杜绝幽灵按钮。 */
-      bool dragRecent = (DateTime.Now - _lastDragSelectAt).TotalMilliseconds < 2500;
-      bool dblRecent = (DateTime.Now - _lastDblClickAt).TotalMilliseconds < 1500;
-      bool keyRecent = (DateTime.Now - _lastKeyAt).TotalMilliseconds < 1500;
-      bool gesture = dragRecent || dblRecent || (keyRecent && shiftRecent);
       if (!gesture) return;
 
       if (hasSel) {
@@ -1571,6 +1579,11 @@ namespace GenDaLangDu {
         _selectionFloater.HideNow();
         return;
       }
+      /* 复制成功后把选区收成光标：选区亮着时继续打字会把选中文字替换掉
+         （Word/WPS 原生行为），收起后用户可立即正常输入 */
+      try {
+        InputSender.CollapseSelectionKeybd();
+      } catch { }
       if (HasChineseText(t)) {
         SpeakZh(t);
       } else {

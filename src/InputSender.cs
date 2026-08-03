@@ -81,6 +81,14 @@ namespace GenDaLangDu {
       Thread.Sleep(30);
     }
 
+    /// <summary>用 keybd_event 按一次左方向键：把选区收成光标（不删字），
+    /// 防止 Word/WPS 等软件在选区亮着时把后续键入的字符替换进选区。</summary>
+    public static void CollapseSelectionKeybd() {
+      keybd_event(0x25, 0x4B, 0, UIntPtr.Zero);
+      keybd_event(0x25, 0x4B, 0x0002, UIntPtr.Zero);
+      Thread.Sleep(30);
+    }
+
     public static ushort ScanOf(ushort vk) {
       return (ushort)MapVirtualKey(vk, 0);
     }
