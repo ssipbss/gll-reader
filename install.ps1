@@ -43,7 +43,7 @@ try {
 
   # 2. 复制语音适配器
   $adapterDest = 'C:\Program Files\NaturalVoiceSAPIAdapter'
-  Log '正在复制语音适配器（含晓晓语音模型）...'
+  Log '正在复制语音适配器（含晓晓、云希语音模型）...'
   if (-not (Test-Path $adapterDest)) { New-Item -ItemType Directory -Path $adapterDest | Out-Null }
   Copy-Item -Path (Join-Path $adapterSrc '*') -Destination $adapterDest -Recurse -Force
   Log ('完成：' + $adapterDest)
@@ -82,32 +82,35 @@ try {
   if (-not (Test-Path $settingsTarget)) {
     if (-not (Test-Path $appData)) { New-Item -ItemType Directory -Path $appData | Out-Null }
     Copy-Item -LiteralPath (Join-Path $appSrc 'settings.xml') -Destination $settingsTarget -Force
-    Log '已写入晓晓语音默认配置'
+    Log '已写入晓晓语音默认配置（可在软件里切换云希）'
   } else {
     Log '检测到已有配置文件，保留现有设置'
   }
 
-  # 6. 验证晓晓语音（64 位与 32 位）
-  Log '正在验证晓晓语音...'
+  # 6. 验证晓晓、云希语音（64 位与 32 位）
+  Log '正在验证晓晓、云希语音...'
   Add-Type -AssemblyName System.Speech
   $ss = New-Object System.Speech.Synthesis.SpeechSynthesizer
-  $found64 = $false
+  $foundXiaoxiao64 = $false
+  $foundYunxi64 = $false
   foreach ($v in $ss.GetInstalledVoices()) {
-    if ($v.VoiceInfo.Name -like '*Xiaoxiao*') { $found64 = $true; break }
+    if ($v.VoiceInfo.Name -like '*Xiaoxiao*') { $foundXiaoxiao64 = $true }
+    if ($v.VoiceInfo.Name -like '*Yunxi*') { $foundYunxi64 = $true }
   }
   $ss.Dispose()
-  if (-not $found64) { throw '64 位语音列表里没有晓晓，请检查杀毒软件是否拦截了组件注册。' }
+  if (-not $foundXiaoxiao64) { throw '64 位语音列表里没有晓晓，请检查杀毒软件是否拦截了组件注册。' }
+  if (-not $foundYunxi64) { throw '64 位语音列表里没有云希，请检查杀毒软件是否拦截了组件注册。' }
 
-  $inner32 = 'Add-Type -AssemblyName System.Speech; $ss=New-Object System.Speech.Synthesis.SpeechSynthesizer; $ok=$false; foreach($v in $ss.GetInstalledVoices()){ if($v.VoiceInfo.Name -like "*Xiaoxiao*"){$ok=$true; break} }; $ss.Dispose(); if($ok){exit 0}else{exit 1}'
+  $inner32 = 'Add-Type -AssemblyName System.Speech; $ss=New-Object System.Speech.Synthesis.SpeechSynthesizer; $a=$false; $b=$false; foreach($v in $ss.GetInstalledVoices()){ if($v.VoiceInfo.Name -like "*Xiaoxiao*"){$a=$true}; if($v.VoiceInfo.Name -like "*Yunxi*"){$b=$true} }; $ss.Dispose(); if($a -and $b){exit 0}else{exit 1}'
   $b64 = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($inner32))
   & "$env:SystemRoot\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -EncodedCommand $b64
-  if ($LASTEXITCODE -ne 0) { throw '32 位语音列表里没有晓晓，请检查杀毒软件是否拦截了组件注册。' }
-  Log '晓晓语音验证通过（32 位 / 64 位）'
+  if ($LASTEXITCODE -ne 0) { throw '32 位语音列表里没有晓晓或云希，请检查杀毒软件是否拦截了组件注册。' }
+  Log '晓晓、云希语音验证通过（32 位 / 64 位）'
 
   # 7. 启动归零归零
   if (-not $SkipLaunch) {
     Start-Process -FilePath (Join-Path $appDest '归零归零.exe')
-    Log '归零归零已启动，使用的是晓晓语音。'
+    Log '归零归零已启动，默认使用晓晓语音，可在软件界面切换云希。'
   }
   Log '安装完成！'
 } catch {
