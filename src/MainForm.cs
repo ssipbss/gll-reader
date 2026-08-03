@@ -64,6 +64,7 @@ namespace GenDaLangDu {
     private AutomationPropertyChangedEventHandler _trayImeHandler;
     private string _trayImeLast = "";
     private DateTime _lastTrayImeFindAt = DateTime.MinValue;
+    private TrayImeIconTracker _trayImeIcon;
     private DateTime _lastSpokenAt = DateTime.MinValue;
     private DateTime _lastDeleteSpeakAt = DateTime.MinValue;
     private DateTime _lastDeleteAt = DateTime.MinValue;
@@ -152,13 +153,16 @@ namespace GenDaLangDu {
       KeyboardHook.DebugLog = delegate(string line) { LogTest(line); };
       ApplyRateVolume();
 
+      _trayImeIcon = new TrayImeIconTracker();
+      _trayImeIcon.StateConfirmed += OnTrayImeIconState;
+
       _imeTimer = new System.Windows.Forms.Timer();
       _imeTimer.Interval = 25;
       _imeTimer.Tick += delegate { CheckIme(); _speaker.FlushAll(); CheckPendingKeySound(); };
 
       _uiTimer = new System.Windows.Forms.Timer();
       _uiTimer.Interval = 100;
-      _uiTimer.Tick += delegate { TrackFocus(); FindTrayImeElement(); _enPassTracker.Check(); CheckUiText(); CheckSelectionDone(); UpdateSelectionButton(); };
+      _uiTimer.Tick += delegate { TrackFocus(); FindTrayImeElement(); if (_trayImeIcon != null) _trayImeIcon.Tick(); _enPassTracker.Check(); CheckUiText(); CheckSelectionDone(); UpdateSelectionButton(); };
 
       _selfElevated = SelfElevated();
       _elevTimer = new System.Windows.Forms.Timer();
@@ -1268,15 +1272,14 @@ namespace GenDaLangDu {
           } catch { }
           _trayImeElements.Clear();
         }
-        IntPtr tray = Native.FindWindow("Shell_TrayWnd", null);
-        if (tray == IntPtr.Zero) return;
-        AutomationElement rootEl = AutomationElement.FromHandle(tray);
+        AutomationElement rootEl = AutomationElement.RootElement;
         if (rootEl == null) return;
         AutomationElementCollection btns = rootEl.FindAll(TreeScope.Descendants,
           new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button));
         foreach (AutomationElement el in btns) {
           string n = el.Current.Name ?? "";
-          if (n.IndexOf("托盘输入指示器", StringComparison.Ordinal) >= 0) {
+          if (n.IndexOf("托盘输入指示器", StringComparison.Ordinal) >= 0 &&
+              n.IndexOf("要切换输入法", StringComparison.Ordinal) < 0) {
             _trayImeElements.Add(el);
             try {
               Automation.AddAutomationPropertyChangedEventHandler(
@@ -1324,6 +1327,22 @@ namespace GenDaLangDu {
       if (name.IndexOf("英语", StringComparison.Ordinal) >= 0) return false;
       if (name.IndexOf("英文", StringComparison.Ordinal) >= 0) return false;
       return null;
+    }
+
+    /// <summary>多多五笔托盘图标通道：认图不猜。
+    /// 中文 = icon_5（"中"字形）或 icon_23（橙红禁圈）；英文 = icon_2/icon_22（键盘形）。</summary>
+    private void OnTrayImeIconState(bool chinese) {
+      try {
+        if (chinese) {
+          _appStates.SetChineseCurrent();
+          DebugLog("TRAY_ICON_STATE 中文(图标)");
+        } else {
+          _appStates.SetEnglishCurrent();
+          DebugLog("TRAY_ICON_STATE 英文(图标)");
+        }
+        _composing = false;
+      } catch {
+      }
     }
 
     private void SubscribeSelectionElement() {
@@ -2446,6 +2465,10 @@ namespace GenDaLangDu {
         _selectionFloater.HideNow();
         _selectionFloater.Dispose();
         _selectionFloater = null;
+      }
+      if (_trayImeIcon != null) {
+        _trayImeIcon.Dispose();
+        _trayImeIcon = null;
       }
       try {
         if (_selectionSubscribedElement != null && _selectionChangedHandler != null) {
