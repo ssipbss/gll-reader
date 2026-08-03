@@ -1625,6 +1625,8 @@ namespace GenDaLangDu {
            其它非 Chromium 应用仍先试 WM_COPY，失败再回退。 */
         bool office = IsDragFallbackApp(fgPid);
         bool useWmCopy = !chromium && !office;
+        /* 统一用带延迟的 keybd_event：实测 SendInput 在本机被拦截
+           （Word 复制无反应），keybd_event 全软件可用且修饰键稳定 */
         uint seqBefore = Native.GetClipboardSequenceNumber();
         DebugLog("SEL_COPY_BEGIN fgpid=" + fgPid + " seq=" + seqBefore);
         /* 不清空剪贴板（清空会让本程序占用剪贴板，Edge 复制不进去）。

@@ -71,12 +71,16 @@ namespace GenDaLangDu {
       Thread.Sleep(30);
     }
 
-    /// <summary>用 keybd_event 模拟 Ctrl+C：Chromium 会屏蔽 SendInput 注入的复制，
-    /// 但对 keybd_event 正常响应（实测有效）。</summary>
+    /// <summary>用 keybd_event 模拟 Ctrl+C（实测 SendInput 在本机被拦截，
+    /// keybd_event 全软件可用）。Ctrl 按下后稍等再按 C，避免修饰键未注册
+    /// 导致 C 直接打进文档替换选区（之前出现过 "cc"）。</summary>
     public static void PressCtrlCKeybd() {
       keybd_event(0x11, 0x1D, 0, UIntPtr.Zero);
+      Thread.Sleep(30);
       keybd_event(0x43, 0x2E, 0, UIntPtr.Zero);
+      Thread.Sleep(20);
       keybd_event(0x43, 0x2E, 0x0002, UIntPtr.Zero);
+      Thread.Sleep(20);
       keybd_event(0x11, 0x1D, 0x0002, UIntPtr.Zero);
       Thread.Sleep(30);
     }
