@@ -134,6 +134,7 @@ namespace GenDaLangDu {
     private AutomationFocusChangedEventHandler _selectionFocusHandler;
     private AutomationEventHandler _selectionChangedHandler;
     private AutomationElement _selectionSubscribedElement;
+    private DateTime _lastSelSubscribeAttemptAt = DateTime.MinValue;
     private TsfBridge _tsfBridge;
     private TsfNotifyWindow _tsfNotifyWindow;
     private readonly HashSet<uint> _tsfActivePids = new HashSet<uint>();
@@ -176,7 +177,7 @@ namespace GenDaLangDu {
 
       _uiTimer = new System.Windows.Forms.Timer();
       _uiTimer.Interval = 100;
-      _uiTimer.Tick += delegate { TrackFocus(); FindTrayImeElement(); if (_trayImeIcon != null) _trayImeIcon.Tick(); _enPassTracker.Check(); CheckUiText(); CheckSelectionDone(); UpdateSelectionButton(); };
+      _uiTimer.Tick += delegate { TrackFocus(); FindTrayImeElement(); if (_trayImeIcon != null) _trayImeIcon.Tick(); _enPassTracker.Check(); CheckUiText(); TryResubscribeSelection(); CheckSelectionDone(); UpdateSelectionButton(); };
 
       _selfElevated = SelfElevated();
       _elevTimer = new System.Windows.Forms.Timer();
@@ -763,6 +764,8 @@ namespace GenDaLangDu {
           }
         }
         if (!HasChineseText(text)) return;
+        /* 中文已上屏 = 组字结束：立即清除内部组字标记，否则紧接的数字会被当成候选键静音 */
+        _composing = false;
         /* TSF 是权威通道：清掉可能正在缓冲的 VK_PACKET 同文，避免双读 */
         if (_packetZhBuffer.Length > 0) {
           _packetZhBuffer.Clear();
@@ -1144,6 +1147,7 @@ namespace GenDaLangDu {
           bool recentTyping = (DateTime.Now - _lastTypingCommitKeyAt).TotalMilliseconds < 1000;
           /* 中文已上屏：状态自愈为中文（即使朗读条件不满足） */
           if (!string.IsNullOrEmpty(delta) && HasCjk(delta)) {
+            _composing = false;
             MarkChineseCommit();
           }
           if (!string.IsNullOrEmpty(delta) && recentTyping && !diffAlreadySpoke && !RecentlySpoken(delta)) {
@@ -1418,7 +1422,8 @@ namespace GenDaLangDu {
           };
           Automation.AddAutomationFocusChangedEventHandler(_selectionFocusHandler);
         }
-        SubscribeSelectionElement();
+        /* 不同步订阅：UIA 查询可能被忙碌的前台程序卡住，启动后异步执行并带响应探测 */
+        try { BeginInvoke((MethodInvoker)SubscribeSelectionElement); } catch { }
       } catch { }
     }
 
@@ -1508,6 +1513,12 @@ namespace GenDaLangDu {
     }
 
     private void SubscribeSelectionElement() {
+      _lastSelSubscribeAttemptAt = DateTime.Now;
+      /* 前台程序未响应时，UIA 查询可能无限期挂起界面线程；跳过并等下次重试 */
+      if (!_testMode && !IsForegroundResponsive()) {
+        DebugLog("SEL_SUBSCRIBE_SKIP not-responding");
+        return;
+      }
       try {
         if (_selectionSubscribedElement != null) {
           try {
@@ -1554,6 +1565,14 @@ namespace GenDaLangDu {
       } catch (Exception ex) {
         DebugLog("SEL_SUBSCRIBE_FAIL " + ex.Message);
       }
+    }
+
+    private void TryResubscribeSelection() {
+      try {
+        if (_selectionSubscribedElement != null) return;
+        if ((DateTime.Now - _lastSelSubscribeAttemptAt).TotalMilliseconds < 3000) return;
+        SubscribeSelectionElement();
+      } catch { }
     }
 
     /// <summary>更新选中朗读按钮：事件驱动和"鼠标活动后轮询"共用入口。

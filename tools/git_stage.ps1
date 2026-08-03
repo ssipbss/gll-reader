@@ -7,7 +7,9 @@ $release = Join-Path $repo $releaseName
 git add -- build.ps1 src tools
 git add -- (Join-Path $release $appName)
 git add -- (Join-Path $release 'gll_hook64.txt') (Join-Path $release 'gll_hook32.txt')
-git add -- (Join-Path $release 'gll_hook64_20260803_221128.dll')
-git add -- (Join-Path $release 'gll_hook32_20260803_221128.dll')
+$ptr64 = [System.IO.File]::ReadAllText((Join-Path $release 'gll_hook64.txt')).Trim()
+$ptr32 = [System.IO.File]::ReadAllText((Join-Path $release 'gll_hook32.txt')).Trim()
+if ($ptr64) { git add -- (Join-Path $release $ptr64) }
+if ($ptr32) { git add -- (Join-Path $release $ptr32) }
 git add -- (Join-Path $release 'gll_hook32_host.exe')
 git status --short
