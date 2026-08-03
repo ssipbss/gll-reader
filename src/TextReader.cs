@@ -4,6 +4,13 @@ using System.Windows.Automation;
 using System.Windows.Automation.Text;
 
 namespace GenDaLangDu {
+  /// <summary>UIA 选区几何信息（只读边界，不读文本，避免触发 UIA 原生崩溃）。</summary>
+  public sealed class SelectionInfo {
+    public System.Collections.Generic.List<System.Windows.Rect> Rects =
+      new System.Collections.Generic.List<System.Windows.Rect>();
+    public System.Windows.Rect Bounds;
+  }
+
   public static class TextReader {
     [StructLayout(LayoutKind.Sequential)]
     private struct GUITHREADINFO {
@@ -82,9 +89,16 @@ namespace GenDaLangDu {
     /// <summary>判断焦点控件当前是否有选区（只取选区数量，不读文本）。
     /// 注意：对选区调用 GetText 在某些应用上会触发 UIA 原生崩溃，取文本改用剪贴板。</summary>
     public static bool HasSelection() {
+      return GetSelectionInfo() != null;
+    }
+
+    /// <summary>读取当前焦点控件的真实选区几何。
+    /// 过滤：矩形必须合理（宽高 &gt;0 且 &lt;20 万像素）；总宽度 ≤4px 视为光标而非选区。
+    /// 不读选区文本（某些应用会触发 UIA 原生崩溃）。返回 null 表示无可用选区。</summary>
+    public static SelectionInfo GetSelectionInfo() {
       try {
         AutomationElement el = AutomationElement.FocusedElement;
-        if (el == null) return false;
+        if (el == null) return null;
         AutomationElement cur = el;
         for (int i = 0; i < 12; i++) {
           if (cur == null) break;
@@ -94,20 +108,33 @@ namespace GenDaLangDu {
               TextPattern tp = (TextPattern)pattern;
               TextPatternRange[] sel = tp.GetSelection();
               if (sel != null && sel.Length > 0) {
-                /* 光标 vs 选区：用边界矩形总宽度区分（光标约1px，选中文字数十px以上）。
-                   不用 CompareEndpoints（Chromium 下不可靠），更不读文本（会触发 UIA 原生崩溃） */
                 try {
                   System.Windows.Rect[] rects = sel[0].GetBoundingRectangles();
-                  if (rects != null && rects.Length > 0) {
-                    double totalWidth = 0;
-                    foreach (System.Windows.Rect rc in rects) totalWidth += rc.Width;
-                    if (totalWidth > 4) return true;
+                  if (rects == null || rects.Length == 0) return null;
+                  SelectionInfo info = new SelectionInfo();
+                  double totalWidth = 0;
+                  foreach (System.Windows.Rect rc in rects) {
+                    if (rc.Width <= 0 || rc.Height <= 0 ||
+                        rc.Width > 200000 || rc.Height > 200000) continue;
+                    info.Rects.Add(rc);
+                    totalWidth += rc.Width;
                   }
+                  if (info.Rects.Count == 0 || totalWidth <= 4) return null;
+                  double left = double.MaxValue, top = double.MaxValue;
+                  double right = double.MinValue, bottom = double.MinValue;
+                  foreach (System.Windows.Rect rc in info.Rects) {
+                    if (rc.Left < left) left = rc.Left;
+                    if (rc.Top < top) top = rc.Top;
+                    if (rc.Right > right) right = rc.Right;
+                    if (rc.Bottom > bottom) bottom = rc.Bottom;
+                  }
+                  info.Bounds = new System.Windows.Rect(left, top, right - left, bottom - top);
+                  return info;
                 } catch {
-                  return false;
+                  return null;
                 }
               }
-              return false;
+              return null;
             }
           } catch { }
           try {
@@ -117,7 +144,7 @@ namespace GenDaLangDu {
           }
         }
       } catch { }
-      return false;
+      return null;
     }
 
     internal static bool IsKnownSlowApp() {

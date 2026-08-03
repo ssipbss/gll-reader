@@ -64,16 +64,17 @@ namespace GenDaLangDu {
       }
     }
 
-    /// <summary>在鼠标附近显示朗读按钮；选中文本为空/变化为无选区时调用 HideNow 隐藏。</summary>
-    public void ShowFor(Point screenPos) {
-      Point pos = screenPos;
-      pos.Offset(14, 14);
-      Rectangle wa = Screen.GetWorkingArea(pos);
-      if (pos.X + Width > wa.Right) pos.X = wa.Right - Width - 4;
-      if (pos.Y + Height > wa.Bottom) pos.Y = wa.Bottom - Height - 4;
-      if (pos.X < wa.Left) pos.X = wa.Left + 4;
-      if (pos.Y < wa.Top) pos.Y = wa.Top + 4;
-      Location = pos;
+    /// <summary>在指定屏幕锚点显示朗读按钮。
+    /// 锚点由调用方按选区端点计算（下方优先，空间不足翻上方），这里只做屏幕边界钳制。</summary>
+    public void ShowFor(Point anchor) {
+      Rectangle wa = Screen.GetWorkingArea(anchor);
+      int x = anchor.X;
+      int y = anchor.Y;
+      if (x + Width > wa.Right) x = wa.Right - Width - 4;
+      if (x < wa.Left) x = wa.Left + 4;
+      if (y + Height > wa.Bottom) y = wa.Bottom - Height - 4;
+      if (y < wa.Top) y = wa.Top + 4;
+      Location = new Point(x, y);
       if (!Visible) {
         Show();
       }

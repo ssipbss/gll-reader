@@ -54,9 +54,17 @@ namespace GenDaLangDu {
     private DateTime _lastMouseDownAt = DateTime.MinValue;
     private DateTime _lastMouseUpAt = DateTime.MinValue;
     private Native.POINT _mouseDownPos;
-    private Native.POINT _mouseUpPos;
-    private DateTime _lastDragSelectAt = DateTime.MinValue;
-    private DateTime _lastClickAt = DateTime.MinValue;
+    private Native.POINT _mouseUpPos;                                               
+    private DateTime _lastDragSelectAt = DateTime.MinValue;                         
+    private DateTime _lastClickAt = DateTime.MinValue;                              
+    private DateTime _lastDblClickAt = DateTime.MinValue;
+    private DateTime _lastShiftKeyAt = DateTime.MinValue;
+    private Native.POINT _lastDownPosPrev;
+    private DateTime _lastDownAtPrev = DateTime.MinValue;
+    private string _selPendingFp = "";
+    private int _selPendingCount;
+    private string _selShownFp = "";
+    private DateTime _selGoneSince = DateTime.MinValue;
     private DateTime _lastSpeakRequestAt = DateTime.MinValue;
     private DateTime _lastButtonToggleAt = DateTime.MinValue;
     private DateTime _lastKeyAt = DateTime.MinValue;
@@ -688,6 +696,7 @@ namespace GenDaLangDu {
         _shiftSpeakPending = false;
       }
       _lastKeyAt = DateTime.Now;
+      if (ShiftHeld()) _lastShiftKeyAt = DateTime.Now;
       DebugLog("KEY vk=0x" + e.Vk.ToString("X") + " scan=0x" + e.Scan.ToString("X"));
       /* 粘贴标记：Ctrl+V / Shift+Insert，用于差异通道的因果校验 */
       if ((e.Vk == 0x56 && CtrlHeld()) || (e.Vk == 0x2D && ShiftHeld())) {
@@ -1383,67 +1392,118 @@ namespace GenDaLangDu {
         HideSelectionButton();
         return;
       }
-      /* 只在鼠标/键盘活动后检查（选中文字必然伴随鼠标拖选或 Shift+方向键），
-         避免输入法/光标移动的事件风暴反复隐藏按钮并拖慢界面 */
-      bool active = (DateTime.Now - _lastKeyAt).TotalMilliseconds < 1500 ||
-                    (DateTime.Now - _lastMouseDownAt).TotalMilliseconds < 1500 ||
-                    (DateTime.Now - _lastMouseUpAt).TotalMilliseconds < 1500;
-      if (!active) return;
-      if ((DateTime.Now - _lastSelectionCheckAt).TotalMilliseconds < 250) return;
+      /* 朗读中：按钮保持"结束朗读"，由 CheckSelectionDone/Esc/结束按钮管理隐藏 */
+      if (_selectionFloater.IsReading) return;
+
+      if ((DateTime.Now - _lastSelectionCheckAt).TotalMilliseconds < 150) return;
       _lastSelectionCheckAt = DateTime.Now;
-      bool hasSel = TextReader.HasSelection();
+
       bool visible = _selectionFloater.Visible;
-      bool dragRecent = (DateTime.Now - _lastDragSelectAt).TotalMilliseconds < 2500;
-      bool clickRecent = (DateTime.Now - _lastClickAt).TotalMilliseconds < 1500;
-      bool keyRecent = (DateTime.Now - _lastKeyAt).TotalMilliseconds < 1500;
-      bool clickNewer = clickRecent && _lastClickAt > _lastDragSelectAt;
-      /* 只有 WPS 这类查不到真实选区的老应用才用"拖选动作"兜底（白名单），
-         避免任务栏/桌面等误弹；浏览器/Word/Codex 走真实选区判断 */
-      bool showByDrag = dragRecent && IsDragFallbackApp(CurrentForegroundPid());
-      bool clickOnButton = visible &&
+      SelectionInfo info = TextReader.GetSelectionInfo();
+      bool hasSel = info != null;
+
+      /* 点击按钮本身不隐藏（点击瞬间应用可能已清除选区） */
+      bool clickOnButton = (DateTime.Now - _lastMouseDownAt).TotalMilliseconds < 1000 &&
         _mouseDownPos.X >= _selectionFloater.Left &&
         _mouseDownPos.X <= _selectionFloater.Right &&
         _mouseDownPos.Y >= _selectionFloater.Top &&
         _mouseDownPos.Y <= _selectionFloater.Bottom;
-      if (visible && clickNewer && !clickOnButton) {
-        /* 点击别处（比拖选更新）视为取消选区：优先于拖选兜底 */
-        if ((DateTime.Now - _lastButtonToggleAt).TotalMilliseconds >= 600) {
-          _lastButtonToggleAt = DateTime.Now;
+
+      /* 选区消失 → 防抖 200ms 后隐藏（不依赖活动窗口，避免残留按钮） */
+      if (visible && !clickOnButton && !hasSel) {
+        if (_selGoneSince == DateTime.MinValue) {
+          _selGoneSince = DateTime.Now;
+        } else if ((DateTime.Now - _selGoneSince).TotalMilliseconds >= 200) {
+          _selGoneSince = DateTime.MinValue;
           HideSelectionButton();
-          DebugLog("SEL_BTN_HIDE click");
+          DebugLog("SEL_BTN_HIDE noselection");
         }
         return;
       }
-      if (visible && keyRecent && !hasSel) {
-        /* 键盘移动光标/取消选区 */
-        if ((DateTime.Now - _lastButtonToggleAt).TotalMilliseconds >= 600) {
-          _lastButtonToggleAt = DateTime.Now;
-          HideSelectionButton();
-          DebugLog("SEL_BTN_HIDE key");
+      _selGoneSince = DateTime.MinValue;
+
+      /* 手势：真实拖动 / 双击 / Shift+点击 / Shift+方向键。
+         普通点击、单纯打字、鼠标晃动都不算选择手势，杜绝幽灵按钮。 */
+      bool dragRecent = (DateTime.Now - _lastDragSelectAt).TotalMilliseconds < 2500;
+      bool dblRecent = (DateTime.Now - _lastDblClickAt).TotalMilliseconds < 1500;
+      bool shiftRecent = (DateTime.Now - _lastShiftKeyAt).TotalMilliseconds < 1200 || ShiftHeld();
+      bool keyRecent = (DateTime.Now - _lastKeyAt).TotalMilliseconds < 1500;
+      bool gesture = dragRecent || dblRecent || (keyRecent && shiftRecent);
+      if (!gesture) return;
+
+      if (hasSel) {
+        /* 实体验证通过：连续两次一致才显示，锚定选区端点（不跟鼠标） */
+        string fp = SelectionFingerprint(info);
+        if (fp != _selPendingFp) {
+          _selPendingFp = fp;
+          _selPendingCount = 0;
+        }
+        _selPendingCount++;
+        if (_selPendingCount < 2) return;
+        if (!visible || fp != _selShownFp) {
+          Point anchor = ComputeSelectionAnchor(info, dragRecent);
+          _selectionFloater.ShowFor(anchor);
+          _selShownFp = fp;
+          DebugLog("SEL_BTN_SHOW rects=" + info.Rects.Count + " bounds=" +
+                   (int)info.Bounds.X + "," + (int)info.Bounds.Y + " " +
+                   (int)info.Bounds.Width + "x" + (int)info.Bounds.Height);
         }
         return;
       }
-      if (hasSel || showByDrag) {
-        /* 有选区（UIA 支持）或刚发生拖选（WPS 等老软件兜底）：显示按钮，
-           首次出现定位到鼠标旁，已显示则固定位置（避免追着鼠标跑）；
-           隐藏后只在新的拖选或键盘选中时重现（点击不算，防止闪烁） */
-        if (!visible && (showByDrag || (hasSel && (dragRecent || clickRecent || keyRecent)))) {
-          if ((DateTime.Now - _lastButtonToggleAt).TotalMilliseconds >= 600) {
-            _lastButtonToggleAt = DateTime.Now;
-            Native.POINT pt;
-            /* 最近有鼠标抬起：定位到高亮末尾（抬起位置）；否则（键盘选中等）用当前鼠标位置 */
-            if ((DateTime.Now - _lastMouseUpAt).TotalMilliseconds < 1500) {
-              pt = _mouseUpPos;
-            } else {
-              Native.GetCursorPos(out pt);
-            }
-            _selectionFloater.ShowFor(new Point(pt.X, pt.Y));
-            DebugLog("SEL_BTN_SHOW");
-          }
+
+      /* WPS 等查不到真实选区的老软件：真实拖动手势兜底（白名单），锚定鼠标抬起点 */
+      if (dragRecent && IsDragFallbackApp(CurrentForegroundPid())) {
+        string fp = "drag@" + _mouseUpPos.X + "," + _mouseUpPos.Y;
+        if (fp != _selPendingFp) {
+          _selPendingFp = fp;
+          _selPendingCount = 0;
         }
-        return;
+        _selPendingCount++;
+        if (_selPendingCount >= 2 && !visible) {
+          _selectionFloater.ShowFor(new Point(_mouseUpPos.X, _mouseUpPos.Y));
+          _selShownFp = fp;
+          DebugLog("SEL_BTN_SHOW drag-fallback");
+        }
       }
-      /* 无选区且无新操作：保持当前状态（隐藏的不再反复打日志） */
+    }
+
+    /// <summary>选区指纹：量化后的各矩形，用于去重（半像素量化容忍提供者抖动）。</summary>
+    private static string SelectionFingerprint(SelectionInfo info) {
+      System.Text.StringBuilder sb = new System.Text.StringBuilder();
+      foreach (System.Windows.Rect rc in info.Rects) {
+        sb.Append((int)Math.Round(rc.X / 2)).Append(',')
+          .Append((int)Math.Round(rc.Y / 2)).Append(',')
+          .Append((int)Math.Round(rc.Width / 2)).Append(',')
+          .Append((int)Math.Round(rc.Height / 2)).Append(';');
+      }
+      return sb.ToString();
+    }
+
+    /// <summary>按选区端点计算按钮锚点：向前选放末尾行右端下方、向后选放起始行左端上方；
+    /// 空间不足时上下翻转，最终由 SelectionFloater 做屏幕边界钳制。</summary>
+    private Point ComputeSelectionAnchor(SelectionInfo info, bool dragRecent) {
+      System.Windows.Rect endRect = info.Rects[0];
+      bool backward = dragRecent &&
+        (_mouseUpPos.Y < _mouseDownPos.Y - 2 ||
+         (Math.Abs(_mouseUpPos.Y - _mouseDownPos.Y) <= 2 && _mouseUpPos.X < _mouseDownPos.X - 2));
+      if (backward) {
+        foreach (System.Windows.Rect rc in info.Rects) {
+          if (rc.Top < endRect.Top - 1 ||
+              (Math.Abs(rc.Top - endRect.Top) <= 1 && rc.Left < endRect.Left)) endRect = rc;
+        }
+      } else {
+        foreach (System.Windows.Rect rc in info.Rects) {
+          if (rc.Bottom > endRect.Bottom + 1 ||
+              (Math.Abs(rc.Bottom - endRect.Bottom) <= 1 && rc.Right > endRect.Right)) endRect = rc;
+        }
+      }
+      int endX = backward ? (int)endRect.Left : (int)endRect.Right;
+      int endY = backward ? (int)endRect.Top : (int)endRect.Bottom;
+      System.Drawing.Rectangle wa = Screen.GetWorkingArea(new Point(endX, endY));
+      bool below = !backward;
+      if (below && endY + 8 + _selectionFloater.Height > wa.Bottom) below = false;
+      if (!below && endY - 8 - _selectionFloater.Height < wa.Top) below = true;
+      return new Point(endX, below ? endY + 8 : endY - 8 - _selectionFloater.Height);
     }
 
     private void HideSelectionButton() {
@@ -2482,6 +2542,17 @@ namespace GenDaLangDu {
       _mouseHook.LeftButtonDown += delegate {
         _lastMouseDownAt = DateTime.Now;
         Native.GetCursorPos(out _mouseDownPos);
+        /* 双击判定：与上次按下间隔 <500ms 且位移 <4px */
+        if (_lastDownAtPrev != DateTime.MinValue &&
+            (_lastMouseDownAt - _lastDownAtPrev).TotalMilliseconds < 500) {
+          int dx = _mouseDownPos.X - _lastDownPosPrev.X;
+          int dy = _mouseDownPos.Y - _lastDownPosPrev.Y;
+          if (dx * dx + dy * dy < 16) _lastDblClickAt = _lastMouseDownAt;
+        }
+        _lastDownAtPrev = _lastMouseDownAt;
+        _lastDownPosPrev = _mouseDownPos;
+        /* Shift+点击 = 选择手势 */
+        if (ShiftHeld()) _lastShiftKeyAt = DateTime.Now;
         /* 按住 Shift 点选文字时，松开不视为中英切换 */
         _shiftTapArmed = false;
       };
