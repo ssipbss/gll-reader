@@ -23,13 +23,13 @@ namespace GenDaLangDu {
       AutoScaleMode = AutoScaleMode.None;
       BackColor = Color.FromArgb(255, 255, 255);
       Padding = new Padding(0);
-      ClientSize = new Size(86, 30);
+      ClientSize = new Size(110, 34);
 
       _btn = new RoundedButton();
       _btn.Text = "开始朗读";
       _btn.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
       _btn.Location = new Point(0, 0);
-      _btn.Size = new Size(86, 30);
+      _btn.Size = new Size(110, 34);
       _btn.FillColor = Color.White;
       _btn.HoverColor = Color.FromArgb(241, 245, 249);
       _btn.DownColor = Color.FromArgb(226, 232, 240);
@@ -47,8 +47,8 @@ namespace GenDaLangDu {
     public void SetReading(bool reading) {
       _reading = reading;
       _btn.Text = reading ? "结束朗读" : "开始朗读";
-      _btn.Width = reading ? 96 : 96;
-      ClientSize = new Size(96, 30);
+      _btn.Width = 110;
+      ClientSize = new Size(110, 34);
     }
 
     protected override bool ShowWithoutActivation {

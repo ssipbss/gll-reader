@@ -1522,9 +1522,9 @@ namespace GenDaLangDu {
       int endY = backward ? (int)endRect.Top : (int)endRect.Bottom;
       System.Drawing.Rectangle wa = Screen.GetWorkingArea(new Point(endX, endY));
       bool below = !backward;
-      if (below && endY + 8 + _selectionFloater.Height > wa.Bottom) below = false;
-      if (!below && endY - 8 - _selectionFloater.Height < wa.Top) below = true;
-      return new Point(endX, below ? endY + 8 : endY - 8 - _selectionFloater.Height);
+      if (below && endY + 12 + _selectionFloater.Height > wa.Bottom) below = false;
+      if (!below && endY - 12 - _selectionFloater.Height < wa.Top) below = true;
+      return new Point(endX, below ? endY + 12 : endY - 12 - _selectionFloater.Height);
     }
 
     private void HideSelectionButton() {
@@ -1555,6 +1555,8 @@ namespace GenDaLangDu {
         DebugLog("SEL_STOP");
         return;
       }
+      /* 立即进入朗读状态（按钮变"结束朗读"），复制期间保持可见 */
+      _selectionFloater.SetReading(true);
       string text = CopySelectionText();
       if (string.IsNullOrEmpty(text)) {
         DebugLog("SEL_SPEAK_EMPTY");
@@ -1580,15 +1582,16 @@ namespace GenDaLangDu {
         }
         if (hasLetter && !_chkLetters.Checked) {
           DebugLog("SEL_SPEAK_LETTERS_OFF");
+          _selectionFloater.SetReading(false);
           return;
         }
         if (!hasLetter && hasDigit && !_chkDigits.Checked) {
           DebugLog("SEL_SPEAK_DIGITS_OFF");
+          _selectionFloater.SetReading(false);
           return;
         }
         _speaker.SpeakEnWord(t);
       }
-      _selectionFloater.SetReading(true);
       DebugLog("SEL_SPEAK [" + TruncateForLog(t) + "]");
     }
 
@@ -1604,9 +1607,11 @@ namespace GenDaLangDu {
         uint fgPid = 0;
         if (fg != IntPtr.Zero) Native.GetWindowThreadProcessId(fg, out fgPid);
         bool chromium = IsChromiumApp(fgPid);
-        /* 非 Chromium 先试 WM_COPY；Word 等自绘控件不响应 0x0301，
-           序列号不变时自动回退键盘 Ctrl+C（只复制不剪切，安全）。 */
-        bool useWmCopy = !chromium;
+        /* Word/WPS/Office 自绘控件实测不响应 WM_COPY（0x0301），
+           直接键盘 Ctrl+C（只复制不剪切，安全），省掉一次无效等待；
+           其它非 Chromium 应用仍先试 WM_COPY，失败再回退。 */
+        bool office = IsDragFallbackApp(fgPid);
+        bool useWmCopy = !chromium && !office;
         uint seqBefore = Native.GetClipboardSequenceNumber();
         DebugLog("SEL_COPY_BEGIN fgpid=" + fgPid + " seq=" + seqBefore);
         /* 不清空剪贴板（清空会让本程序占用剪贴板，Edge 复制不进去）。
@@ -1618,7 +1623,7 @@ namespace GenDaLangDu {
         sendCopy();
         string t = null;
         for (int i = 0; i < 3; i++) {
-          System.Threading.Thread.Sleep(250);
+          System.Threading.Thread.Sleep(150);
           try {
             uint seq = Native.GetClipboardSequenceNumber();
             if (seq != seqBefore) {
@@ -1677,13 +1682,15 @@ namespace GenDaLangDu {
       }
     }
 
-    /// <summary>拖选动作兜底只给查不到真实选区的老软件（WPS 系列），
-    /// 避免任务栏、桌面等无关窗口误弹朗读按钮。</summary>
+    /// <summary>拖选动作兜底：WPS/Office 查不到或迟迟不发布 UIA 选区，
+    /// 真实拖动手势直接按鼠标抬起点弹按钮（Word 的 UIA 选区要 2~3 秒才出来，
+    /// 等它会让用户误点已选中的文字）。</summary>
     private static bool IsDragFallbackApp(uint pid) {
       try {
         using (System.Diagnostics.Process p = System.Diagnostics.Process.GetProcessById((int)pid)) {
           string n = p.ProcessName.ToLowerInvariant();
-          return n == "wps" || n == "et" || n == "wpp";
+          return n == "wps" || n == "et" || n == "wpp" ||
+                 n == "winword" || n == "excel" || n == "powerpnt";
         }
       } catch {
         return false;
