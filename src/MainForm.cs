@@ -65,6 +65,8 @@ namespace GenDaLangDu {
     private int _selPendingCount;
     private string _selShownFp = "";
     private DateTime _selGoneSince = DateTime.MinValue;
+    private bool _selFallback;
+    private DateTime _selFallbackShownAt = DateTime.MinValue;
     private DateTime _lastSpeakRequestAt = DateTime.MinValue;
     private DateTime _lastButtonToggleAt = DateTime.MinValue;
     private DateTime _lastKeyAt = DateTime.MinValue;
@@ -1409,13 +1411,28 @@ namespace GenDaLangDu {
         _mouseDownPos.Y >= _selectionFloater.Top &&
         _mouseDownPos.Y <= _selectionFloater.Bottom;
 
-      /* 选区消失 → 防抖 200ms 后隐藏（不依赖活动窗口，避免残留按钮） */
-      if (visible && !clickOnButton && !hasSel) {
+      /* 点击按钮以外区域（普通单击）视为取消选区 */
+      bool clickAway = (DateTime.Now - _lastClickAt).TotalMilliseconds < 1000 && !clickOnButton;
+      /* 非 Shift 组合的键盘活动视为移动光标/取消选区 */
+      bool shiftRecent = (DateTime.Now - _lastShiftKeyAt).TotalMilliseconds < 1200 || ShiftHeld();
+      bool keyAway = (DateTime.Now - _lastKeyAt).TotalMilliseconds < 1200 && !shiftRecent;
+      if (visible && (clickAway || keyAway)) {
+        _selGoneSince = DateTime.MinValue;
+        HideSelectionButton();
+        _selFallback = false;
+        DebugLog("SEL_BTN_HIDE " + (clickAway ? "click" : "key"));
+        return;
+      }
+
+      /* UIA 模式下选区消失 → 防抖 200ms 后隐藏；
+         WPS 等兜底模式（_selFallback）查不到 UIA 选区，不能靠这个隐藏（否则会闪） */
+      if (visible && !_selFallback && !hasSel) {
         if (_selGoneSince == DateTime.MinValue) {
           _selGoneSince = DateTime.Now;
         } else if ((DateTime.Now - _selGoneSince).TotalMilliseconds >= 200) {
           _selGoneSince = DateTime.MinValue;
           HideSelectionButton();
+          _selFallback = false;
           DebugLog("SEL_BTN_HIDE noselection");
         }
         return;
@@ -1426,7 +1443,6 @@ namespace GenDaLangDu {
          普通点击、单纯打字、鼠标晃动都不算选择手势，杜绝幽灵按钮。 */
       bool dragRecent = (DateTime.Now - _lastDragSelectAt).TotalMilliseconds < 2500;
       bool dblRecent = (DateTime.Now - _lastDblClickAt).TotalMilliseconds < 1500;
-      bool shiftRecent = (DateTime.Now - _lastShiftKeyAt).TotalMilliseconds < 1200 || ShiftHeld();
       bool keyRecent = (DateTime.Now - _lastKeyAt).TotalMilliseconds < 1500;
       bool gesture = dragRecent || dblRecent || (keyRecent && shiftRecent);
       if (!gesture) return;
@@ -1444,6 +1460,7 @@ namespace GenDaLangDu {
           Point anchor = ComputeSelectionAnchor(info, dragRecent);
           _selectionFloater.ShowFor(anchor);
           _selShownFp = fp;
+          _selFallback = false;
           DebugLog("SEL_BTN_SHOW rects=" + info.Rects.Count + " bounds=" +
                    (int)info.Bounds.X + "," + (int)info.Bounds.Y + " " +
                    (int)info.Bounds.Width + "x" + (int)info.Bounds.Height);
@@ -1459,9 +1476,13 @@ namespace GenDaLangDu {
           _selPendingCount = 0;
         }
         _selPendingCount++;
-        if (_selPendingCount >= 2 && !visible) {
+        /* 兜底模式：已显示时不再隐藏（UIA 查不到选区），只有新拖选/点击/键盘才更新；
+           防止"显示→无选区隐藏→又显示"的闪烁循环 */
+        if (_selPendingCount >= 2 && (!visible || _lastDragSelectAt > _selFallbackShownAt)) {
           _selectionFloater.ShowFor(new Point(_mouseUpPos.X, _mouseUpPos.Y));
           _selShownFp = fp;
+          _selFallback = true;
+          _selFallbackShownAt = _lastDragSelectAt;
           DebugLog("SEL_BTN_SHOW drag-fallback");
         }
       }
@@ -1583,12 +1604,18 @@ namespace GenDaLangDu {
         uint fgPid = 0;
         if (fg != IntPtr.Zero) Native.GetWindowThreadProcessId(fg, out fgPid);
         bool chromium = IsChromiumApp(fgPid);
+        /* 非 Chromium 先试 WM_COPY；Word 等自绘控件不响应 0x0301，
+           序列号不变时自动回退键盘 Ctrl+C（只复制不剪切，安全）。 */
+        bool useWmCopy = !chromium;
         uint seqBefore = Native.GetClipboardSequenceNumber();
         DebugLog("SEL_COPY_BEGIN fgpid=" + fgPid + " seq=" + seqBefore);
         /* 不清空剪贴板（清空会让本程序占用剪贴板，Edge 复制不进去）。
-           复制后剪贴板序列号变化 = Edge 确实写入了新内容，才读取。 */
-        if (chromium) InputSender.PressCtrlCKeybd();
-        else SendWmCopy();
+           复制后剪贴板序列号变化 = 应用确实写入了新内容，才读取。 */
+        Action sendCopy = delegate {
+          if (useWmCopy) SendWmCopy();
+          else InputSender.PressCtrlCKeybd();
+        };
+        sendCopy();
         string t = null;
         for (int i = 0; i < 3; i++) {
           System.Threading.Thread.Sleep(250);
@@ -1608,10 +1635,15 @@ namespace GenDaLangDu {
               DebugLog("SEL_COPY_GET_EX " + ex.Message);
             }
           }
+          if (!string.IsNullOrEmpty(t)) break;
+          if (useWmCopy) {
+            /* WM_COPY 没生效（Word 自绘控件不响应）→ 回退键盘 Ctrl+C */
+            useWmCopy = false;
+            DebugLog("SEL_COPY_WMCOPY_FAIL_FALLBACK_KEYBD");
+          }
           if (i < 2) {
-            /* 序列号没变 = 浏览器没响应复制，重新发送一次复制键 */
-            if (chromium) InputSender.PressCtrlCKeybd();
-            else SendWmCopy();
+            /* 序列号没变 = 应用没响应复制，重新发送一次复制键 */
+            sendCopy();
           }
         }
         DebugLog("SEL_COPY_END len=" + (t == null ? -1 : t.Length));
@@ -1630,8 +1662,8 @@ namespace GenDaLangDu {
       }
     }
 
-    /// <summary>Chromium 类应用（浏览器/Electron）才允许键盘注入复制；
-    /// Word/WPS/记事本等标准控件只用 WM_COPY，绝不回退键盘注入（防止误触发剪切）。</summary>
+    /// <summary>Chromium 类应用（浏览器/Electron）直接键盘注入复制；
+    /// 其它应用先试 WM_COPY，失败后回退键盘 Ctrl+C（只复制不剪切，安全）。</summary>
     private static bool IsChromiumApp(uint pid) {
       try {
         using (System.Diagnostics.Process p = System.Diagnostics.Process.GetProcessById((int)pid)) {
