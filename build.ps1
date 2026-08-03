@@ -65,4 +65,5 @@ if ($LASTEXITCODE -ne 0) { throw '测试工具编译失败' }
 
 Copy-Item (Join-Path $out 'app.exe') (Join-Path $finalOut '归零归零.exe') -Force
 Copy-Item (Join-Path $root '使用说明.txt') (Join-Path $finalOut '使用说明.txt') -Force
+Copy-Item (Join-Path $root '测试清单.txt') (Join-Path $finalOut '测试清单.txt') -Force
 Write-Output ("BUILD OK: " + (Join-Path $finalOut '归零归零.exe'))
