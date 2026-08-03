@@ -172,6 +172,11 @@ namespace GenDaLangDu {
     private delegate bool InstallFn();
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     private delegate void SetDebugFn(int on);
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    private delegate bool ThreadHookFn(uint tid);
+
+    [DllImport("user32.dll")]
+    private static extern bool PostThreadMessageW(uint idThread, uint msg, IntPtr wParam, IntPtr lParam);
 
     private IntPtr _module;
     private IntPtr _shmFile;
@@ -236,6 +241,39 @@ namespace GenDaLangDu {
         }
         _installed = false;
         return true;
+      } catch {
+        return false;
+      }
+    }
+
+    public bool HookThread(uint tid) {
+      try {
+        if (_module == IntPtr.Zero) return false;
+        IntPtr p = GetProcAddress(_module, "GllHookThread");
+        if (p == IntPtr.Zero) return false;
+        ThreadHookFn fn = (ThreadHookFn)Marshal.GetDelegateForFunctionPointer(p, typeof(ThreadHookFn));
+        return fn(tid);
+      } catch {
+        return false;
+      }
+    }
+
+    public bool UnhookThread(uint tid) {
+      try {
+        if (_module == IntPtr.Zero) return false;
+        IntPtr p = GetProcAddress(_module, "GllUnhookThread");
+        if (p == IntPtr.Zero) return false;
+        ThreadHookFn fn = (ThreadHookFn)Marshal.GetDelegateForFunctionPointer(p, typeof(ThreadHookFn));
+        return fn(tid);
+      } catch {
+        return false;
+      }
+    }
+
+    /// <summary>向目标线程投递一条空消息，触发前台消息钩子立即初始化 TSF 观察者。</summary>
+    public bool NudgeThread(uint tid) {
+      try {
+        return PostThreadMessageW(tid, 0, IntPtr.Zero, IntPtr.Zero);
       } catch {
         return false;
       }

@@ -12,4 +12,5 @@ $ptr32 = [System.IO.File]::ReadAllText((Join-Path $release 'gll_hook32.txt')).Tr
 if ($ptr64) { git add -- (Join-Path $release $ptr64) }
 if ($ptr32) { git add -- (Join-Path $release $ptr32) }
 git add -- (Join-Path $release 'gll_hook32_host.exe')
+git add -u
 git status --short

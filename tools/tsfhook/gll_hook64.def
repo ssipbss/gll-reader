@@ -2,5 +2,7 @@ LIBRARY gll_hook64.dll
 EXPORTS
 GllInstallHook
 GllUninstallHook
+GllHookThread
+GllUnhookThread
 GllSetDebug
 GllIsComposing

@@ -140,6 +140,7 @@ namespace GenDaLangDu {
     private readonly HashSet<uint> _tsfActivePids = new HashSet<uint>();
     private readonly Dictionary<uint, DateTime> _tsfCommitAt = new Dictionary<uint, DateTime>();
     private Process _hook32Host;
+    private uint _hookedTid;
 
     public MainForm(string[] args) {
       _loading = true;
@@ -192,6 +193,7 @@ namespace GenDaLangDu {
           DebugLog("TSF_HOOK_RESTART");
           StartTsfHook();
         }
+        EnsureForegroundHook();
         if (_listening && (!_hook.IsInstalled || !_hook.IsHookThreadAlive)) {
           DebugLog("HOOK_RESTART");
           try { _hook.Install(); } catch { }
@@ -699,8 +701,31 @@ namespace GenDaLangDu {
           DebugLog("TSF_HOOK install=" + ok + " err=[" + _tsfBridge.LastError + "] dll=" + dll);
         }
         StartHook32Host();
+        EnsureForegroundHook();
       } catch (Exception ex) {
         DebugLog("TSF_HOOK_START_ERR " + ex.Message);
+      }
+    }
+
+    private void EnsureForegroundHook() {
+      try {
+        if (_tsfBridge == null) return;
+        IntPtr h = Native.GetForegroundWindow();
+        if (h == IntPtr.Zero) return;
+        uint pid;
+        uint tid = Native.GetWindowThreadProcessId(h, out pid);
+        if (tid == _hookedTid) return;
+        if (_hookedTid != 0) {
+          _tsfBridge.UnhookThread(_hookedTid);
+          _hookedTid = 0;
+        }
+        if (tid != 0 && _tsfBridge.HookThread(tid)) {
+          _hookedTid = tid;
+          _tsfBridge.NudgeThread(tid);
+          DebugLog("TSF_THREAD_HOOK tid=" + tid + " pid=" + pid);
+        }
+      } catch (Exception ex) {
+        DebugLog("TSF_THREAD_HOOK_ERR " + ex.Message);
       }
     }
 
@@ -734,6 +759,10 @@ namespace GenDaLangDu {
 
     private void StopTsfHook() {
       try {
+        if (_hookedTid != 0 && _tsfBridge != null) {
+          try { _tsfBridge.UnhookThread(_hookedTid); } catch { }
+          _hookedTid = 0;
+        }
         if (_hook32Host != null) {
           try {
             if (!_hook32Host.HasExited) _hook32Host.Kill();
@@ -822,6 +851,10 @@ namespace GenDaLangDu {
           _shiftTapArmed = true;
           _shiftDownAt = DateTime.Now;
           _shiftTapPid = tsfPid;
+          _shiftSpeakPending = false;
+        } else {
+          /* 组字期间按过其它键：松开 Shift 时不再补念 Shift */
+          _shiftTapArmed = false;
           _shiftSpeakPending = false;
         }
         DebugLog("KEY_SUPPRESS_TSF vk=0x" + e.Vk.ToString("X") + " pid=" + tsfPid);
@@ -1009,7 +1042,16 @@ namespace GenDaLangDu {
       if (!string.IsNullOrEmpty(chars)) {
         foreach (char c in chars) {
           if (KeyTranslator.IsLatinLetter(c)) {
-            if ((chineseMode || _composing) && !ShiftOrCaps() && !ImeEnglishNow) {
+            char lc2 = char.ToLowerInvariant(KeyTranslator.NormalizeLatin(c));
+            uint ltrPid = _appStates.CurrentPid != 0 ? _appStates.CurrentPid : CurrentForegroundPid();
+            bool tsfActiveNow = _tsfActivePids.Contains(ltrPid);
+            bool tsfCompNow = _tsfBridge != null && _tsfBridge.IsComposing(ltrPid);
+            if (tsfActiveNow && !tsfCompNow) {
+              /* TSF 权威：没有在组字 = 直接上屏的英文，立即朗读（不再靠记忆猜中英状态） */
+              _lastPinyinKeyAt = DateTime.Now;
+              _lastTypingCommitKeyAt = DateTime.Now;
+              if (_chkLetters.Checked) _speaker.SpeakEn(lc2.ToString());
+            } else if ((chineseMode || _composing) && !ShiftOrCaps() && !ImeEnglishNow) {
               _composing = true;
               _lastPinyinKeyAt = DateTime.Now;
               _lastTypingCommitKeyAt = DateTime.Now;
@@ -1408,6 +1450,7 @@ namespace GenDaLangDu {
           DebugLog("FOCUS pid=" + pid + " app=" + _appStates.GetAppName(pid) +
                    " english=" + _appStates.IsEnglish(pid));
         }
+        EnsureForegroundHook();
       } catch { }
     }
 

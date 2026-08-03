@@ -809,6 +809,8 @@ static LRESULT CALLBACK WorkerWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
   return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+static void EnsureWorkerAndPostInit(void);
+
 static void CALLBACK WinEventProc(HWINEVENTHOOK hook, DWORD event, HWND hwnd,
                                   LONG idObject, LONG idChild, DWORD tid, DWORD time) {
   if (event != EVENT_SYSTEM_FOREGROUND && event != EVENT_OBJECT_FOCUS) return;
@@ -824,6 +826,11 @@ static void CALLBACK WinEventProc(HWINEVENTHOOK hook, DWORD event, HWND hwnd,
   if (InterlockedExchange(&g_firstEventLogged, 1) == 0) {
     Dbg(L"WINEVENT first event tid=%lu", tid);
   }
+  EnsureWorkerAndPostInit();
+}
+
+/* 在前台线程上创建隐藏窗口并触发延迟初始化（WinEvent 与前台消息钩子共用） */
+static void EnsureWorkerAndPostInit(void) {
   ShmEnsure();
   GllThreadCtx *ctx = (GllThreadCtx*)TlsGetValue(g_tlsCtxSlot);
   if (!ctx) {
@@ -856,6 +863,54 @@ static void CALLBACK WinEventProc(HWINEVENTHOOK hook, DWORD event, HWND hwnd,
 }
 
 /* ---------------- 导出 ---------------- */
+static HHOOK g_threadHooks[16];
+static DWORD g_threadHookTids[16];
+
+static LRESULT CALLBACK ForegroundHookProc(int nCode, WPARAM wParam, LPARAM lParam) {
+  if (nCode == HC_ACTION) {
+    EnsureWorkerAndPostInit();
+  }
+  return CallNextHookEx(NULL, nCode, wParam, lParam);
+}
+
+__declspec(dllexport) BOOL WINAPI GllHookThread(DWORD tid) {
+  if (tid == 0) return FALSE;
+  int i;
+  for (i = 0; i < 16; i++) {
+    if (g_threadHookTids[i] == tid && g_threadHooks[i]) return TRUE;
+  }
+  HHOOK h = SetWindowsHookExW(WH_GETMESSAGE, ForegroundHookProc, g_hinst, tid);
+  if (!h) {
+    Dbg(L"thread hook fail tid=%lu err=%lu", tid, GetLastError());
+    return FALSE;
+  }
+  for (i = 0; i < 16; i++) {
+    if (!g_threadHooks[i]) {
+      g_threadHooks[i] = h;
+      g_threadHookTids[i] = tid;
+      Dbg(L"thread hook ok tid=%lu", tid);
+      return TRUE;
+    }
+  }
+  UnhookWindowsHookEx(h);
+  Dbg(L"thread hook slots full");
+  return FALSE;
+}
+
+__declspec(dllexport) BOOL WINAPI GllUnhookThread(DWORD tid) {
+  int i;
+  for (i = 0; i < 16; i++) {
+    if (g_threadHookTids[i] == tid && g_threadHooks[i]) {
+      UnhookWindowsHookEx(g_threadHooks[i]);
+      g_threadHooks[i] = NULL;
+      g_threadHookTids[i] = 0;
+      Dbg(L"thread hook removed tid=%lu", tid);
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
 __declspec(dllexport) BOOL WINAPI GllInstallHook(void) {
   ShmEnsure();
   if (!g_winEventHook) {
@@ -913,6 +968,16 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
     break;
   case DLL_PROCESS_DETACH:
     GllUninstallHook();
+    {
+      int i;
+      for (i = 0; i < 16; i++) {
+        if (g_threadHooks[i]) {
+          UnhookWindowsHookEx(g_threadHooks[i]);
+          g_threadHooks[i] = NULL;
+          g_threadHookTids[i] = 0;
+        }
+      }
+    }
     if (g_tlsSlot != 0xFFFFFFFF) {
       GllThreadCtx *ctx = (GllThreadCtx*)TlsGetValue(g_tlsCtxSlot);
       if (ctx) {
