@@ -128,6 +128,30 @@ namespace GenDaLangDu {
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
 
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
+
+    /// <summary>枚举所有任务栏窗口（主屏/副屏各一个，类名均为 Shell_TrayWnd）。
+    /// 托盘输入指示器按钮只在任务栏子树内，绝不遍历整个桌面 UIA 树（避免卡死/静默崩溃）。</summary>
+    public static System.Collections.Generic.List<IntPtr> EnumerateTaskbars() {
+      System.Collections.Generic.List<IntPtr> list = new System.Collections.Generic.List<IntPtr>();
+      try {
+        EnumWindows(delegate(IntPtr h, IntPtr l) {
+          System.Text.StringBuilder sb = new System.Text.StringBuilder(128);
+          GetClassName(h, sb, sb.Capacity);
+          string cls = sb.ToString();
+          if (cls == "Shell_TrayWnd" || cls == "Shell_SecondaryTrayWnd") list.Add(h);
+          return true;
+        }, IntPtr.Zero);
+      } catch { }
+      return list;
+    }
+
     [DllImport("user32.dll")]
     public static extern short GetKeyState(int nVirtKey);
 

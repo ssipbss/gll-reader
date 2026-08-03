@@ -196,21 +196,26 @@ namespace GenDaLangDu {
       _rect = Rectangle.Empty;
       _lastFindAt = DateTime.Now;
       try {
-        AutomationElement rootEl = AutomationElement.RootElement;
-        AutomationElementCollection btns = rootEl.FindAll(TreeScope.Descendants,
-          new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button));
-        foreach (AutomationElement el in btns) {
-          string n = el.Current.Name ?? "";
-          if (n.IndexOf("托盘输入指示器", StringComparison.Ordinal) < 0) continue;
-          if (n.IndexOf("要切换输入法", StringComparison.Ordinal) >= 0) continue;
-          /* 微软输入法的名称是"中文模式/英语模式"（文字通道已覆盖）；
-             多多五笔等 IMM 输入法是"中文/英文"，名称固定，只能靠图标。 */
-          if (n.IndexOf("模式", StringComparison.Ordinal) >= 0) continue;
-          System.Windows.Rect r = el.Current.BoundingRectangle;
-          if (r.Width > 1 && r.Height > 1 && r.Width <= 55) {
-            _rect = new Rectangle((int)r.X, (int)r.Y, (int)r.Width, (int)r.Height);
-            return;
-          }
+        foreach (IntPtr tray in Native.EnumerateTaskbars()) {
+          try {
+            AutomationElement rootEl = AutomationElement.FromHandle(tray);
+            if (rootEl == null) continue;
+            AutomationElementCollection btns = rootEl.FindAll(TreeScope.Descendants,
+              new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button));
+            foreach (AutomationElement el in btns) {
+              string n = el.Current.Name ?? "";
+              if (n.IndexOf("托盘输入指示器", StringComparison.Ordinal) < 0) continue;
+              if (n.IndexOf("要切换输入法", StringComparison.Ordinal) >= 0) continue;
+              /* 微软输入法的名称是"中文模式/英语模式"（文字通道已覆盖）；
+                 多多五笔等 IMM 输入法是"中文/英文"，名称固定，只能靠图标。 */
+              if (n.IndexOf("模式", StringComparison.Ordinal) >= 0) continue;
+              System.Windows.Rect r = el.Current.BoundingRectangle;
+              if (r.Width > 1 && r.Height > 1 && r.Width <= 55) {
+                _rect = new Rectangle((int)r.X, (int)r.Y, (int)r.Width, (int)r.Height);
+                return;
+              }
+            }
+          } catch { }
         }
       } catch {
       }
