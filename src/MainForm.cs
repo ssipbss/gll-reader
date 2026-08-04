@@ -986,6 +986,10 @@ namespace GenDaLangDu {
           /* 中文模式下空格是输入法的上屏键：不响提示音，等上屏内容朗读。
              Shift/大写锁定下的英文直通空格才保留提示音 */
           if (!ImeEnglishNow && !ShiftOrCaps()) {
+            /* 空格提示音强制排队：先让上屏内容朗读，再响提示音 */
+            _pendingKeySoundPath = SpaceSoundPath;
+            _pendingKeySoundAt = DateTime.Now;
+            DebugLog("KEY_SOUND_DEFER [" + System.IO.Path.GetFileName(SpaceSoundPath) + "]");
             if (_composing) {
               CheckUiText();
               if (_composing) {
@@ -1223,6 +1227,7 @@ namespace GenDaLangDu {
         if (_shiftTrayStateAtDown.HasValue && _trayImeEnglish == _shiftTrayStateAtDown) {
           bool wasEng = _trayImeEnglish.Value;
           _trayImeEnglish = !wasEng;
+          _trayImeLast = wasEng ? "zh" : "en";
           _composing = false;
           DebugLog("SHIFT_TAP_FLIP tray-authority " + (wasEng ? "en->zh" : "zh->en") + " pid=" + pid);
           FlushShiftLetters();
@@ -2692,7 +2697,6 @@ namespace GenDaLangDu {
     private void MarkChineseCommit() {
       _enPassTracker.Cancel("zh");
       CancelPendingSpace();
-      CancelPendingKeySound();
       CancelShiftLetters("zh");
       _appStates.SetChineseCurrent();
       _lastChineseCommitAt = DateTime.Now;
