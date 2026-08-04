@@ -149,6 +149,7 @@ namespace GenDaLangDu {
     private TsfNotifyWindow _tsfNotifyWindow;
     private readonly HashSet<uint> _tsfActivePids = new HashSet<uint>();
     private readonly Dictionary<uint, DateTime> _tsfCommitAt = new Dictionary<uint, DateTime>();
+    private bool _tsfCompositionReadByDiff;
     private Process _hook32Host;
     private uint _hookedTid;
 
@@ -819,6 +820,13 @@ namespace GenDaLangDu {
           DebugLog("TSF_CANCEL_PACKET_BUFFER");
         }
         CancelPendingSpace();
+        bool diffSpoke = _tsfCompositionReadByDiff && text == _lastDiffCommitText &&
+                         (DateTime.Now - _lastDiffCommitAt).TotalMilliseconds < 800;
+        _tsfCompositionReadByDiff = false;
+        if (diffSpoke) {
+          DebugLog("TSF_COMMIT_SKIP diff_spoke");
+          return;
+        }
         if (!RecentlySpoken(text)) {
           SpeakZh(text);
           RememberSpoken(text);
@@ -835,6 +843,7 @@ namespace GenDaLangDu {
     private void OnTsfState(uint pid, bool composing) {
       try {
         if (!_listening) return;
+        if (composing) _tsfCompositionReadByDiff = false;
         DebugLog("TSF_STATE pid=" + pid + " composing=" + composing);
       } catch { }
     }
@@ -1082,7 +1091,13 @@ namespace GenDaLangDu {
             } else if (tsfActiveNow) {
               /* TSF 生效但此刻未组字：可能是编码首字母，也可能真是英文；
                  缓冲 120ms，由 TSF 稍后状态裁决，绝不猜 */
-              if (TrayOnlyStateMode) {
+              if (ImeEnglishNow) {
+                /* 托盘已确认英文：直接上屏英文，立即朗读 */
+                _lastPinyinKeyAt = DateTime.Now;
+                _lastTypingCommitKeyAt = DateTime.Now;
+                if (_chkLetters.Checked) _speaker.SpeakEn(lc2.ToString());
+              } else if (TrayOnlyStateMode) {
+                /* 托盘仍为中文：字母按五笔码处理，静默 */
                 _composing = true;
                 _lastPinyinKeyAt = DateTime.Now;
                 _lastTypingCommitKeyAt = DateTime.Now;
@@ -1423,6 +1438,7 @@ namespace GenDaLangDu {
       RememberSpoken(spk);
       _lastDiffCommitText = spk;
       _lastDiffCommitAt = DateTime.Now;
+      if (_tsfActivePids.Contains(pid0)) _tsfCompositionReadByDiff = true;
       MarkChineseCommit();
       DebugLog("UI_INSERT [" + ins + "]");
       return true;
