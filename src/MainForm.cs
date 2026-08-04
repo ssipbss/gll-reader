@@ -150,6 +150,9 @@ namespace GenDaLangDu {
     private readonly HashSet<uint> _tsfActivePids = new HashSet<uint>();
     private readonly Dictionary<uint, DateTime> _tsfCommitAt = new Dictionary<uint, DateTime>();
     private bool _tsfCompositionReadByDiff;
+    private System.Threading.Tasks.Task<FocusedTextResult> _uiTextTask;
+    private System.Threading.Tasks.Task<List<string>> _trayFindTask;
+    private System.Threading.Tasks.Task<SelectionInfo> _selInfoTask;
     private Process _hook32Host;
     private uint _hookedTid;
 
@@ -1187,12 +1190,12 @@ namespace GenDaLangDu {
       }
       uint pid = _shiftTapPid;
       if (pid == 0) pid = CurrentForegroundPid();
-      if (pid == 0 || !TextReader.IsFocusEditable()) {
-        DebugLog("SHIFT_TAP_IGNORED no-editable pid=" + pid);
-        return;
-      }
       if (TrayOnlyStateMode) {
         DebugLog("SHIFT_TAP_IGNORED tray-authority pid=" + pid);
+        return;
+      }
+      if (pid == 0 || !TextReader.IsFocusEditable()) {
+        DebugLog("SHIFT_TAP_IGNORED no-editable pid=" + pid);
         return;
       }
       bool wasEnglish = _appStates.IsEnglish(pid);
@@ -1595,21 +1598,32 @@ namespace GenDaLangDu {
       try {
         if ((DateTime.Now - _lastTrayImeFindAt).TotalMilliseconds < 1000) return;
         _lastTrayImeFindAt = DateTime.Now;
-        foreach (IntPtr tray in Native.EnumerateTaskbars()) {
-          try {
-            AutomationElement rootEl = AutomationElement.FromHandle(tray);
-            if (rootEl == null) continue;
-            AutomationElementCollection btns = rootEl.FindAll(TreeScope.Descendants,
-              new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button));
-            foreach (AutomationElement el in btns) {
-              string n = el.Current.Name ?? "";
-              if (n.IndexOf("托盘输入指示器", StringComparison.Ordinal) >= 0 &&
-                  n.IndexOf("要切换输入法", StringComparison.Ordinal) < 0) {
-                ApplyTrayImeState(n);
+        if (_trayFindTask != null && !_trayFindTask.IsCompleted) return;
+        var task = System.Threading.Tasks.Task.Run(() => {
+          List<string> names = new List<string>();
+          foreach (IntPtr tray in Native.EnumerateTaskbars()) {
+            try {
+              AutomationElement rootEl = AutomationElement.FromHandle(tray);
+              if (rootEl == null) continue;
+              AutomationElementCollection btns = rootEl.FindAll(TreeScope.Descendants,
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button));
+              foreach (AutomationElement el in btns) {
+                string n = el.Current.Name ?? "";
+                if (n.IndexOf("托盘输入指示器", StringComparison.Ordinal) >= 0 &&
+                    n.IndexOf("要切换输入法", StringComparison.Ordinal) < 0) {
+                  names.Add(n);
+                }
               }
-            }
-          } catch { }
+            } catch { }
+          }
+          return names;
+        });
+        _trayFindTask = task;
+        if (!task.Wait(500)) {
+          DebugLog("TRAY_QUERY_TIMEOUT");
+          return;
         }
+        foreach (string n in task.Result) ApplyTrayImeState(n);
       } catch (Exception ex) {
         DebugLog("TRAY_IME_FIND_FAIL " + ex.Message);
       }
@@ -1800,7 +1814,17 @@ namespace GenDaLangDu {
       bool needUia = gesture || (visible && !_selFallback);
       if (!needUia) return;
 
-      SelectionInfo info = TextReader.GetSelectionInfo();
+      if (_selInfoTask != null && !_selInfoTask.IsCompleted) {
+        DebugLog("SEL_QUERY_BUSY");
+        return;
+      }
+      var sit = System.Threading.Tasks.Task.Run(() => TextReader.GetSelectionInfo());
+      _selInfoTask = sit;
+      if (!sit.Wait(400)) {
+        DebugLog("SEL_QUERY_TIMEOUT");
+        return;
+      }
+      SelectionInfo info = sit.Result;
       bool hasSel = info != null;
 
       /* UIA 模式下选区消失 → 防抖 200ms 后隐藏；
@@ -2137,7 +2161,27 @@ namespace GenDaLangDu {
       string uiDiag;
       int caret;
       bool caretAbs;
-      string t = TextReader.GetFocusedText(out elementId, out uiDiag, out caret, out caretAbs);
+      string t;
+      if (_uiTextTask != null && !_uiTextTask.IsCompleted) {
+        DebugLog("UI_QUERY_BUSY");
+        return;
+      }
+      var ftask = System.Threading.Tasks.Task.Run(() => {
+        var r = new FocusedTextResult();
+        r.Text = TextReader.GetFocusedText(out r.ElementId, out r.UiDiag, out r.Caret, out r.CaretAbs);
+        return r;
+      });
+      _uiTextTask = ftask;
+      if (!ftask.Wait(500)) {
+        DebugLog("UI_QUERY_TIMEOUT");
+        return;
+      }
+      FocusedTextResult fr = ftask.Result;
+      t = fr.Text;
+      elementId = fr.ElementId;
+      uiDiag = fr.UiDiag;
+      caret = fr.Caret;
+      caretAbs = fr.CaretAbs;
       if (t == null) {
         if (_lastUiElement != elementId) {
           _lastUiElement = elementId;
@@ -3055,6 +3099,14 @@ namespace GenDaLangDu {
       _hook.KeyEvent -= OnKeyBridge;
       _hook.Dispose();
       base.OnFormClosed(e);
+    }
+
+    private sealed class FocusedTextResult {
+      public string Text;
+      public string ElementId;
+      public string UiDiag;
+      public int Caret;
+      public bool CaretAbs;
     }
   }
 }
