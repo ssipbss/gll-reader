@@ -111,6 +111,7 @@ namespace GenDaLangDu {
     private System.Windows.Forms.Timer _shiftLetterTimer;
     private DateTime _shiftPressedAt = DateTime.MinValue;
     private DateTime _shiftLetterDeadline = DateTime.MinValue;
+    private bool? _shiftTrayStateAtDown;
     private bool _lastImcChinese = true;
     /* 试运行开关：托盘指示器作为中/英状态唯一权威。
        程序记忆+Shift翻转、英文直通、字母缓冲、IMM中文布局判断四项暂不生效；
@@ -885,6 +886,7 @@ namespace GenDaLangDu {
         _shiftPressedAt = DateTime.Now;
         _shiftLetterDeadline = _shiftPressedAt.AddMilliseconds(1200);
         EnsureShiftLetterTimer();
+        _shiftTrayStateAtDown = _trayImeEnglish;
       }
       /* TSF/IMM 输入法正在组字（共享内存实时状态）：字母/数字/标点/上屏键全部静默，
          只等输入法上屏事件朗读，绝不读未上屏的码与候选 */
@@ -906,6 +908,11 @@ namespace GenDaLangDu {
         if (isLetterKey && ShiftOrCaps()) {
           /* 长按 Shift 输入英文：字母直接上屏，即使 TSF 标记组字也不压制 */
         } else {
+          /* 组字期间的按键（码/数字候选/上屏键）标记为组字中，
+             避免组字状态短暂回落后把候选数字当普通数字朗读 */
+          _composing = true;
+          _lastPinyinKeyAt = DateTime.Now;
+          _lastTypingCommitKeyAt = DateTime.Now;
           DebugLog("KEY_SUPPRESS_TSF vk=0x" + e.Vk.ToString("X") + " pid=" + tsfPid);
           return;
         }
@@ -1101,9 +1108,8 @@ namespace GenDaLangDu {
               _lastPinyinKeyAt = DateTime.Now;
               _lastTypingCommitKeyAt = DateTime.Now;
               if (_chkLetters.Checked) _speaker.SpeakEn(lc2.ToString());
-            } else if (InShiftLetterWindow()) {
-              /* Shift 刚按下、托盘状态还没确认（可能切英文也可能切回中文）：
-                 先缓冲，等状态确认后决定补读（英文）或丢弃（中文） */
+            } else if (_trayImeEnglish == null && InShiftLetterWindow()) {
+              /* 托盘状态未知时，Shift 后的字母先缓冲，等状态确认后决定补读或丢弃 */
               _shiftLetterBuf.Append(lc2);
               EnsureShiftLetterTimer();
               _composing = true;
@@ -1214,7 +1220,18 @@ namespace GenDaLangDu {
       uint pid = _shiftTapPid;
       if (pid == 0) pid = CurrentForegroundPid();
       if (TrayOnlyStateMode) {
-        DebugLog("SHIFT_TAP_IGNORED tray-authority pid=" + pid);
+        if (_shiftTrayStateAtDown.HasValue && _trayImeEnglish == _shiftTrayStateAtDown) {
+          bool wasEng = _trayImeEnglish.Value;
+          _trayImeEnglish = !wasEng;
+          _composing = false;
+          DebugLog("SHIFT_TAP_FLIP tray-authority " + (wasEng ? "en->zh" : "zh->en") + " pid=" + pid);
+          FlushShiftLetters();
+        } else {
+          DebugLog("SHIFT_TAP_FLIP_SKIP tray-authority pid=" + pid +
+                   " down=" + (_shiftTrayStateAtDown.HasValue ? (_shiftTrayStateAtDown.Value ? "en" : "zh") : "null") +
+                   " now=" + (_trayImeEnglish.HasValue ? (_trayImeEnglish.Value ? "en" : "zh") : "null"));
+        }
+        _shiftTrayStateAtDown = null;
         return;
       }
       if (pid == 0 || !TextReader.IsFocusEditable()) {
