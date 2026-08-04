@@ -107,6 +107,10 @@ namespace GenDaLangDu {
     private bool _shiftSpeakPending;
     private EnPassTracker _enPassTracker = new EnPassTracker();
     private DateTime _lastLetterKeyAt = DateTime.MinValue;
+    private readonly System.Text.StringBuilder _shiftLetterBuf = new System.Text.StringBuilder();
+    private System.Windows.Forms.Timer _shiftLetterTimer;
+    private DateTime _shiftPressedAt = DateTime.MinValue;
+    private DateTime _shiftLetterDeadline = DateTime.MinValue;
     private bool _lastImcChinese = true;
     /* 试运行开关：托盘指示器作为中/英状态唯一权威。
        程序记忆+Shift翻转、英文直通、字母缓冲、IMM中文布局判断四项暂不生效；
@@ -816,6 +820,7 @@ namespace GenDaLangDu {
           _tsfLetterPid = 0;
           DebugLog("TSF_LETTER_CANCEL_BY_COMMIT");
         }
+        CancelShiftLetters("tsf");
         /* TSF 是权威通道：清掉可能正在缓冲的 VK_PACKET 同文，避免双读 */
         if (_packetZhBuffer.Length > 0) {
           _packetZhBuffer.Clear();
@@ -874,6 +879,9 @@ namespace GenDaLangDu {
       if (e.Vk == 0x10 || e.Vk == 0xA0 || e.Vk == 0xA1) {
         _lastTrayImeFindAt = DateTime.MinValue;
         if (_trayImeIcon != null) _trayImeIcon.RefreshNow();
+        _shiftPressedAt = DateTime.Now;
+        _shiftLetterDeadline = _shiftPressedAt.AddMilliseconds(1200);
+        EnsureShiftLetterTimer();
       }
       /* TSF/IMM 输入法正在组字（共享内存实时状态）：字母/数字/标点/上屏键全部静默，
          只等输入法上屏事件朗读，绝不读未上屏的码与候选 */
@@ -1090,6 +1098,13 @@ namespace GenDaLangDu {
               _lastPinyinKeyAt = DateTime.Now;
               _lastTypingCommitKeyAt = DateTime.Now;
               if (_chkLetters.Checked) _speaker.SpeakEn(lc2.ToString());
+            } else if (!ImeEnglishNow && InShiftLetterWindow()) {
+              /* Shift 刚按下、托盘状态还没确认：先缓冲，确认英文后补读 */
+              _shiftLetterBuf.Append(lc2);
+              EnsureShiftLetterTimer();
+              _composing = true;
+              _lastPinyinKeyAt = DateTime.Now;
+              _lastTypingCommitKeyAt = DateTime.Now;
             } else if (tsfCompNow) {
               /* TSF 正在组字：编码，不读 */
               _composing = true;
@@ -1305,6 +1320,56 @@ namespace GenDaLangDu {
       }
       if (_chkLetters.Checked) _speaker.SpeakEn(text);
       DebugLog("TSF_LETTER_READ [" + text + "]");
+    }
+
+    private bool InShiftLetterWindow() {
+      double ms = (DateTime.Now - _shiftPressedAt).TotalMilliseconds;
+      return ms >= 0 && ms < 1200;
+    }
+
+    private void EnsureShiftLetterTimer() {
+      if (_shiftLetterTimer == null) {
+        _shiftLetterTimer = new System.Windows.Forms.Timer();
+        _shiftLetterTimer.Interval = 250;
+        _shiftLetterTimer.Tick += delegate { ShiftLetterTimerTick(); };
+      }
+      _shiftLetterTimer.Stop();
+      _shiftLetterTimer.Start();
+    }
+
+    private void ShiftLetterTimerTick() {
+      try {
+        if (_trayFindTask != null && !_trayFindTask.IsCompleted && DateTime.Now < _shiftLetterDeadline) {
+          _shiftLetterTimer.Start();
+          return;
+        }
+        FlushShiftLetters();
+      } catch { }
+    }
+
+    private void FlushShiftLetters() {
+      if (_shiftLetterTimer != null) _shiftLetterTimer.Stop();
+      if (_shiftLetterBuf.Length == 0) return;
+      string text = _shiftLetterBuf.ToString();
+      _shiftLetterBuf.Clear();
+      if (ImeEnglishNow && _chkLetters.Checked) {
+        _composing = false;
+        foreach (char ch in text) _speaker.SpeakEn(ch.ToString());
+        DebugLog("SHIFT_LETTER_READ [" + text + "]");
+      } else {
+        DebugLog("SHIFT_LETTER_DROP [" + text + "]");
+      }
+    }
+
+    private void CancelShiftLetters(string reason) {
+      if (ImeEnglishNow) return;
+      if (_shiftLetterBuf.Length == 0) {
+        if (_shiftLetterTimer != null) _shiftLetterTimer.Stop();
+        return;
+      }
+      DebugLog("SHIFT_LETTER_CANCEL [" + _shiftLetterBuf + "] " + reason);
+      _shiftLetterBuf.Clear();
+      if (_shiftLetterTimer != null) _shiftLetterTimer.Stop();
     }
 
     private void BufferPacketZh(char c) {
@@ -1644,6 +1709,7 @@ namespace GenDaLangDu {
       _trayImeLast = key;
       bool zh = chinese.Value;
       _trayImeEnglish = !zh;
+      FlushShiftLetters();
       if (zh) {
         _appStates.SetChineseCurrent();
         _composing = false;
@@ -1676,6 +1742,7 @@ namespace GenDaLangDu {
     private void OnTrayImeIconState(bool chinese) {
       try {
         _trayImeEnglish = !chinese;
+        FlushShiftLetters();
         if (chinese) {
           _appStates.SetChineseCurrent();
           DebugLog("TRAY_ICON_STATE 中文(图标)");
@@ -2564,6 +2631,7 @@ namespace GenDaLangDu {
       _enPassTracker.Cancel("zh");
       CancelPendingSpace();
       CancelPendingKeySound();
+      CancelShiftLetters("zh");
       _appStates.SetChineseCurrent();
       _lastChineseCommitAt = DateTime.Now;
       _lastZhCommitAt = DateTime.Now;
