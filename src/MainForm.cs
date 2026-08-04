@@ -108,6 +108,11 @@ namespace GenDaLangDu {
     private EnPassTracker _enPassTracker = new EnPassTracker();
     private DateTime _lastLetterKeyAt = DateTime.MinValue;
     private bool _lastImcChinese = true;
+    /* 试运行开关：托盘指示器作为中/英状态唯一权威。
+       程序记忆+Shift翻转、英文直通、字母缓冲、IMM中文布局判断四项暂不生效；
+       试用稳定后删除 TrayOnlyStateMode 相关代码。 */
+    private const bool TrayOnlyStateMode = true;
+    private bool? _trayImeEnglish;
     private readonly System.Text.StringBuilder _packetZhBuffer = new System.Text.StringBuilder();
     private System.Windows.Forms.Timer _packetZhTimer;
     private const int PacketZhMergeMs = 150;
@@ -136,6 +141,7 @@ namespace GenDaLangDu {
     private SelectionFloater _selectionFloater;
     private DateTime _lastSelectionCheckAt = DateTime.MinValue;
     private AutomationFocusChangedEventHandler _selectionFocusHandler;
+    private bool _selectionFocusHandlerPending;
     private AutomationEventHandler _selectionChangedHandler;
     private AutomationElement _selectionSubscribedElement;
     private DateTime _lastSelSubscribeAttemptAt = DateTime.MinValue;
@@ -932,7 +938,7 @@ namespace GenDaLangDu {
 
       ImeState ime = _ime.GetState();
       bool composing = ime.IsComposing;
-      bool chineseMode = ime.IsChineseMode || RecentChineseActive();
+      bool chineseMode = TrayOnlyStateMode ? !ImeEnglishNow : (ime.IsChineseMode || RecentChineseActive());
       if (!chineseMode) {
         _composing = false;
         _lastPinyinKeyAt = DateTime.MinValue;
@@ -1076,7 +1082,14 @@ namespace GenDaLangDu {
             } else if (tsfActiveNow) {
               /* TSF 生效但此刻未组字：可能是编码首字母，也可能真是英文；
                  缓冲 120ms，由 TSF 稍后状态裁决，绝不猜 */
-              BufferTsfLetter(ltrPid, lc2);
+              if (TrayOnlyStateMode) {
+                _composing = true;
+                _lastPinyinKeyAt = DateTime.Now;
+                _lastTypingCommitKeyAt = DateTime.Now;
+                DebugLog("TSF_LETTER_SKIP tray-authority");
+              } else {
+                BufferTsfLetter(ltrPid, lc2);
+              }
             } else if ((chineseMode || _composing) && !ImeEnglishNow) {
               _composing = true;
               _lastPinyinKeyAt = DateTime.Now;
@@ -1163,6 +1176,10 @@ namespace GenDaLangDu {
         DebugLog("SHIFT_TAP_IGNORED no-editable pid=" + pid);
         return;
       }
+      if (TrayOnlyStateMode) {
+        DebugLog("SHIFT_TAP_IGNORED tray-authority pid=" + pid);
+        return;
+      }
       bool wasEnglish = _appStates.IsEnglish(pid);
       bool nowEnglish = !wasEnglish;
       _appStates.ToggleChinese(pid, !nowEnglish);
@@ -1195,7 +1212,7 @@ namespace GenDaLangDu {
       ImeState st = _ime.GetState();
       /* 老程序（WPS/记事本等有 IMC）：鼠标切英文后转换状态会变化，直接自愈 */
       bool nowImcChinese = st.IsChineseMode;
-      if (_lastImcChinese && !nowImcChinese && !ShiftHeld() && !CapsLockOn()) {
+      if (!TrayOnlyStateMode && _lastImcChinese && !nowImcChinese && !ShiftHeld() && !CapsLockOn()) {
         _appStates.SetEnglishCurrent();
         _composing = false;
         _enPassTracker.Cancel("imc");
@@ -1332,6 +1349,10 @@ namespace GenDaLangDu {
       /* 鼠标切英文的直通字母：记忆状态仍是中文时，先按"候选"缓冲，
          超过4个字母且停顿后未被中文替换（拼音/五笔组字上屏）则确认英文并朗读 */
       if (!ImeEnglishNow && IsPureAsciiLetters(ins)) {
+        if (TrayOnlyStateMode) {
+          DebugLog("UI_INSERT_SKIP enpass_off");
+          return false;
+        }
         if ((DateTime.Now - _lastLetterKeyAt).TotalMilliseconds >= 2000) {
           DebugLog("UI_INSERT_SKIP nokey_letters");
           return false;
@@ -1427,6 +1448,7 @@ namespace GenDaLangDu {
     /// <summary>英文直通确认：记忆状态翻成英文，并把缓冲的字母补读出来。</summary>
     private void OnEnPassConfirmed(string letters) {
       if (ImeEnglishNow) return;
+      if (TrayOnlyStateMode) return;
       _appStates.SetEnglishCurrent();
       _composing = false;
       if (_chkLetters.Checked) {
@@ -1505,6 +1527,10 @@ namespace GenDaLangDu {
         Native.GetWindowThreadProcessId(h, out pid);
         if (pid == 0 || pid == (uint)Process.GetCurrentProcess().Id) return;
         if (pid != _appStates.CurrentPid) {
+          if (TrayOnlyStateMode) {
+            _trayImeEnglish = null;
+            _trayImeLast = "";
+          }
           _appStates.SetCurrentPid(pid);
           /* 切换窗口时隐藏朗读按钮（朗读中可用 Esc 停止） */
           HideSelectionButton();
@@ -1520,6 +1546,16 @@ namespace GenDaLangDu {
     private void InitSelectionWatcher() {
       try {
         if (_selectionFocusHandler == null) {
+          if (IsExplorerForeground()) {
+            /* 资源管理器/桌面没有文本选区，跳过 UIA 事件订阅，避免查询被拖住 */
+            _selectionFocusHandlerPending = true;
+            return;
+          }
+          if (!_testMode && !IsForegroundResponsive()) {
+            /* 前台程序卡死时先不注册 UIA 焦点事件，避免启动被拖住；稍后由轮询重试 */
+            _selectionFocusHandlerPending = true;
+            return;
+          }
           _selectionFocusHandler = delegate(object src, AutomationFocusChangedEventArgs e) {
             /* 不在 UIA 事件回调栈里做 UIA 调用（会导致原生崩溃），排队到消息循环执行 */
             try { BeginInvoke((MethodInvoker)SubscribeSelectionElement); } catch { }
@@ -1534,9 +1570,7 @@ namespace GenDaLangDu {
     /// <summary>监控任务栏输入法指示器（"中文模式/英语模式"文字）：
     /// 这是系统实时状态，鼠标切换、Win+空格等任何方式都能感知。</summary>
     private void InitTrayImeWatcher() {
-      try {
-        FindTrayImeElement();
-      } catch { }
+      /* 托盘名称检测由 UI 定时器每秒轮询，这里不同步调用，避免启动被 UIA 拖住 */
     }
 
     /// <summary>轮询所有任务栏子树上的"输入指示器"按钮名称（不订阅事件、不遍历整个桌面，
@@ -1573,6 +1607,7 @@ namespace GenDaLangDu {
       if (key == _trayImeLast) return;
       _trayImeLast = key;
       bool zh = chinese.Value;
+      _trayImeEnglish = !zh;
       if (zh) {
         _appStates.SetChineseCurrent();
         _composing = false;
@@ -1604,6 +1639,7 @@ namespace GenDaLangDu {
     /// 中文 = icon_5（"中"字形）或 icon_23（橙红禁圈）；英文 = icon_2/icon_22（键盘形）。</summary>
     private void OnTrayImeIconState(bool chinese) {
       try {
+        _trayImeEnglish = !chinese;
         if (chinese) {
           _appStates.SetChineseCurrent();
           DebugLog("TRAY_ICON_STATE 中文(图标)");
@@ -1621,6 +1657,10 @@ namespace GenDaLangDu {
       /* 前台程序未响应时，UIA 查询可能无限期挂起界面线程；跳过并等下次重试 */
       if (!_testMode && !IsForegroundResponsive()) {
         DebugLog("SEL_SUBSCRIBE_SKIP not-responding");
+        return;
+      }
+      if (IsExplorerForeground()) {
+        DebugLog("SEL_SUBSCRIBE_SKIP explorer");
         return;
       }
       try {
@@ -1673,6 +1713,10 @@ namespace GenDaLangDu {
 
     private void TryResubscribeSelection() {
       try {
+        if (_selectionFocusHandlerPending && IsForegroundResponsive() && !IsExplorerForeground()) {
+          _selectionFocusHandlerPending = false;
+          InitSelectionWatcher();
+        }
         if (_selectionSubscribedElement != null) return;
         if ((DateTime.Now - _lastSelSubscribeAttemptAt).TotalMilliseconds < 3000) return;
         SubscribeSelectionElement();
@@ -1684,6 +1728,10 @@ namespace GenDaLangDu {
     /// 仅在鼠标/键盘活动后查询，平时零开销。</summary>
     private void UpdateSelectionButton() {
       if (_selectionFloater == null) return;
+      if (IsExplorerForeground()) {
+        HideSelectionButton();
+        return;
+      }
       if (!_chkClickSpeak.Checked) {
         HideSelectionButton();
         return;
@@ -2196,6 +2244,21 @@ namespace GenDaLangDu {
       }
     }
 
+    private static bool IsExplorerForeground() {
+      try {
+        IntPtr h = Native.GetForegroundWindow();
+        if (h == IntPtr.Zero) return false;
+        uint pid;
+        Native.GetWindowThreadProcessId(h, out pid);
+        if (pid == 0) return false;
+        using (Process p = Process.GetProcessById((int)pid)) {
+          return string.Equals(p.ProcessName, "explorer", StringComparison.OrdinalIgnoreCase);
+        }
+      } catch {
+        return false;
+      }
+    }
+
     private static bool HasChineseText(string s) {
       if (string.IsNullOrEmpty(s)) return false;
       foreach (char c in s) {
@@ -2445,6 +2508,7 @@ namespace GenDaLangDu {
     private bool ImeEnglishNow {
       get {
         if (CapsLockOn()) return true;
+        if (TrayOnlyStateMode) return _trayImeEnglish == true;
         return _appStates.IsEnglishCurrent();
       }
     }
