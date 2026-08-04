@@ -7,3 +7,5 @@ _patch_test.txt
 发布/debug.log
 测试/hook_log.txt
 *.user
+安装包/
+语音测试样本/
