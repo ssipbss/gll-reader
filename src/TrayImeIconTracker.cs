@@ -33,6 +33,11 @@ namespace GenDaLangDu {
       _enB = TrayImeTemplates.Load(TrayImeTemplates.Icon22Png);
     }
 
+    public void RefreshNow() {
+      _lastCaptureAt = DateTime.MinValue;
+      _lastFindAt = DateTime.MinValue;
+    }
+
     public void Tick() {
       if (_disposed) return;
       try {

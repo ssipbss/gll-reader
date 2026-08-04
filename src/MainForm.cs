@@ -871,6 +871,10 @@ namespace GenDaLangDu {
       }
       if (e.IsAutoRepeat) return;
       if (e.Vk >= 0x41 && e.Vk <= 0x5A) _lastLetterKeyAt = DateTime.Now;
+      if (e.Vk == 0x10 || e.Vk == 0xA0 || e.Vk == 0xA1) {
+        _lastTrayImeFindAt = DateTime.MinValue;
+        if (_trayImeIcon != null) _trayImeIcon.RefreshNow();
+      }
       /* TSF/IMM 输入法正在组字（共享内存实时状态）：字母/数字/标点/上屏键全部静默，
          只等输入法上屏事件朗读，绝不读未上屏的码与候选 */
       uint tsfPid = CurrentForegroundPid();
@@ -1594,30 +1598,32 @@ namespace GenDaLangDu {
 
     /// <summary>轮询所有任务栏子树上的"输入指示器"按钮名称（不订阅事件、不遍历整个桌面，
     /// 避免 UIA 全树遍历/事件订阅导致卡死或静默崩溃）。每秒一次，代价极小。</summary>
+    private static List<string> QueryTrayImeNames() {
+      List<string> names = new List<string>();
+      foreach (IntPtr tray in Native.EnumerateTaskbars()) {
+        try {
+          AutomationElement rootEl = AutomationElement.FromHandle(tray);
+          if (rootEl == null) continue;
+          AutomationElementCollection btns = rootEl.FindAll(TreeScope.Descendants,
+            new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button));
+          foreach (AutomationElement el in btns) {
+            string n = el.Current.Name ?? "";
+            if (n.IndexOf("托盘输入指示器", StringComparison.Ordinal) >= 0 &&
+                n.IndexOf("要切换输入法", StringComparison.Ordinal) < 0) {
+              names.Add(n);
+            }
+          }
+        } catch { }
+      }
+      return names;
+    }
+
     private void FindTrayImeElement() {
       try {
         if ((DateTime.Now - _lastTrayImeFindAt).TotalMilliseconds < 1000) return;
         _lastTrayImeFindAt = DateTime.Now;
         if (_trayFindTask != null && !_trayFindTask.IsCompleted) return;
-        var task = System.Threading.Tasks.Task.Run(() => {
-          List<string> names = new List<string>();
-          foreach (IntPtr tray in Native.EnumerateTaskbars()) {
-            try {
-              AutomationElement rootEl = AutomationElement.FromHandle(tray);
-              if (rootEl == null) continue;
-              AutomationElementCollection btns = rootEl.FindAll(TreeScope.Descendants,
-                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button));
-              foreach (AutomationElement el in btns) {
-                string n = el.Current.Name ?? "";
-                if (n.IndexOf("托盘输入指示器", StringComparison.Ordinal) >= 0 &&
-                    n.IndexOf("要切换输入法", StringComparison.Ordinal) < 0) {
-                  names.Add(n);
-                }
-              }
-            } catch { }
-          }
-          return names;
-        });
+        var task = System.Threading.Tasks.Task.Run(() => QueryTrayImeNames());
         _trayFindTask = task;
         if (!task.Wait(500)) {
           DebugLog("TRAY_QUERY_TIMEOUT");
