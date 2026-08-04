@@ -986,10 +986,6 @@ namespace GenDaLangDu {
           /* 中文模式下空格是输入法的上屏键：不响提示音，等上屏内容朗读。
              Shift/大写锁定下的英文直通空格才保留提示音 */
           if (!ImeEnglishNow && !ShiftOrCaps()) {
-            /* 空格提示音强制排队：先让上屏内容朗读，再响提示音 */
-            _pendingKeySoundPath = SpaceSoundPath;
-            _pendingKeySoundAt = DateTime.Now;
-            DebugLog("KEY_SOUND_DEFER [" + System.IO.Path.GetFileName(SpaceSoundPath) + "]");
             if (_composing) {
               CheckUiText();
               if (_composing) {
@@ -1001,7 +997,11 @@ namespace GenDaLangDu {
               ScheduleImeCheck();
               return;
             }
-            /* 输入法内部组字但程序没跟上（_composing=false）时，空格仍是上屏键 */
+            /* 非组字状态按空格 = 真正的空格：提示音排队；
+               若随后有中文上屏（漏判组字），上屏事件会取消这个提示音 */
+            _pendingKeySoundPath = SpaceSoundPath;
+            _pendingKeySoundAt = DateTime.Now;
+            DebugLog("KEY_SOUND_DEFER [" + System.IO.Path.GetFileName(SpaceSoundPath) + "]");
             CheckUiText();
             ScheduleImeCheck();
             return;
@@ -2697,6 +2697,7 @@ namespace GenDaLangDu {
     private void MarkChineseCommit() {
       _enPassTracker.Cancel("zh");
       CancelPendingSpace();
+      CancelPendingKeySound();
       CancelShiftLetters("zh");
       _appStates.SetChineseCurrent();
       _lastChineseCommitAt = DateTime.Now;
