@@ -1101,8 +1101,9 @@ namespace GenDaLangDu {
               _lastPinyinKeyAt = DateTime.Now;
               _lastTypingCommitKeyAt = DateTime.Now;
               if (_chkLetters.Checked) _speaker.SpeakEn(lc2.ToString());
-            } else if (!ImeEnglishNow && InShiftLetterWindow()) {
-              /* Shift 刚按下、托盘状态还没确认：先缓冲，确认英文后补读 */
+            } else if (InShiftLetterWindow()) {
+              /* Shift 刚按下、托盘状态还没确认（可能切英文也可能切回中文）：
+                 先缓冲，等状态确认后决定补读（英文）或丢弃（中文） */
               _shiftLetterBuf.Append(lc2);
               EnsureShiftLetterTimer();
               _composing = true;
@@ -1726,6 +1727,7 @@ namespace GenDaLangDu {
           foreach (string n in t.Result) ApplyTrayImeState(n);
         }
       } catch { }
+      FlushShiftLetters();
       if (ReferenceEquals(_trayFindTask, t)) _trayFindTask = null;
       if (_trayRefreshPending) {
         _trayRefreshPending = false;
