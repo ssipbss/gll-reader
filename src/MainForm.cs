@@ -106,6 +106,7 @@ namespace GenDaLangDu {
     private uint _shiftTapPid;
     private bool _shiftSpeakPending;
     private EnPassTracker _enPassTracker = new EnPassTracker();
+    private DateTime _lastLetterKeyAt = DateTime.MinValue;
     private bool _lastImcChinese = true;
     private readonly System.Text.StringBuilder _packetZhBuffer = new System.Text.StringBuilder();
     private System.Windows.Forms.Timer _packetZhTimer;
@@ -851,6 +852,7 @@ namespace GenDaLangDu {
         return;
       }
       if (e.IsAutoRepeat) return;
+      if (e.Vk >= 0x41 && e.Vk <= 0x5A) _lastLetterKeyAt = DateTime.Now;
       /* TSF/IMM 输入法正在组字（共享内存实时状态）：字母/数字/标点/上屏键全部静默，
          只等输入法上屏事件朗读，绝不读未上屏的码与候选 */
       uint tsfPid = CurrentForegroundPid();
@@ -1330,6 +1332,10 @@ namespace GenDaLangDu {
       /* 鼠标切英文的直通字母：记忆状态仍是中文时，先按"候选"缓冲，
          超过4个字母且停顿后未被中文替换（拼音/五笔组字上屏）则确认英文并朗读 */
       if (!ImeEnglishNow && IsPureAsciiLetters(ins)) {
+        if ((DateTime.Now - _lastLetterKeyAt).TotalMilliseconds >= 2000) {
+          DebugLog("UI_INSERT_SKIP nokey_letters");
+          return false;
+        }
         if (_enPassTracker.Note(ins, _lastUiElement)) return false;
       }
       /* 退格/删除后1秒内，若期间没有新的按键，差异不朗读（删除不会产生新增，误读的'插入'不可信）；
