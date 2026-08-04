@@ -157,6 +157,8 @@ namespace GenDaLangDu {
     private System.Threading.Tasks.Task<FocusedTextResult> _uiTextTask;
     private System.Threading.Tasks.Task<List<string>> _trayFindTask;
     private System.Threading.Tasks.Task<SelectionInfo> _selInfoTask;
+    private AutomationElement _trayImeButton;
+    private bool _trayRefreshPending;
     private Process _hook32Host;
     private uint _hookedTid;
 
@@ -877,7 +879,8 @@ namespace GenDaLangDu {
       if (e.IsAutoRepeat) return;
       if (e.Vk >= 0x41 && e.Vk <= 0x5A) _lastLetterKeyAt = DateTime.Now;
       if (e.Vk == 0x10 || e.Vk == 0xA0 || e.Vk == 0xA1) {
-        _lastTrayImeFindAt = DateTime.MinValue;
+        _lastTrayImeFindAt = DateTime.Now;
+        RefreshTrayState();
         if (_trayImeIcon != null) _trayImeIcon.RefreshNow();
         _shiftPressedAt = DateTime.Now;
         _shiftLetterDeadline = _shiftPressedAt.AddMilliseconds(1200);
@@ -1663,8 +1666,25 @@ namespace GenDaLangDu {
 
     /// <summary>轮询所有任务栏子树上的"输入指示器"按钮名称（不订阅事件、不遍历整个桌面，
     /// 避免 UIA 全树遍历/事件订阅导致卡死或静默崩溃）。每秒一次，代价极小。</summary>
-    private static List<string> QueryTrayImeNames() {
+    private static bool IsTrayImeButtonName(string n) {
+      return n != null &&
+             n.IndexOf("托盘输入指示器", StringComparison.Ordinal) >= 0 &&
+             n.IndexOf("要切换输入法", StringComparison.Ordinal) < 0;
+    }
+
+    private List<string> QueryTrayImeNames() {
       List<string> names = new List<string>();
+      try {
+        AutomationElement cached = _trayImeButton;
+        if (cached != null) {
+          string n = cached.Current.Name ?? "";
+          if (IsTrayImeButtonName(n)) {
+            names.Add(n);
+            return names;
+          }
+        }
+      } catch { }
+      _trayImeButton = null;
       foreach (IntPtr tray in Native.EnumerateTaskbars()) {
         try {
           AutomationElement rootEl = AutomationElement.FromHandle(tray);
@@ -1673,9 +1693,10 @@ namespace GenDaLangDu {
             new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button));
           foreach (AutomationElement el in btns) {
             string n = el.Current.Name ?? "";
-            if (n.IndexOf("托盘输入指示器", StringComparison.Ordinal) >= 0 &&
-                n.IndexOf("要切换输入法", StringComparison.Ordinal) < 0) {
+            if (IsTrayImeButtonName(n)) {
+              _trayImeButton = el;
               names.Add(n);
+              return names;
             }
           }
         } catch { }
@@ -1683,18 +1704,40 @@ namespace GenDaLangDu {
       return names;
     }
 
+    private void RefreshTrayState() {
+      try {
+        if (_trayFindTask != null && !_trayFindTask.IsCompleted) {
+          _trayRefreshPending = true;
+          return;
+        }
+        var task = System.Threading.Tasks.Task.Run(() => QueryTrayImeNames());
+        _trayFindTask = task;
+        task.ContinueWith(t => {
+          try { BeginInvoke((MethodInvoker)delegate { TrayQueryFinished(t); }); } catch { }
+        }, System.Threading.Tasks.TaskScheduler.Default);
+      } catch (Exception ex) {
+        DebugLog("TRAY_IME_FIND_FAIL " + ex.Message);
+      }
+    }
+
+    private void TrayQueryFinished(System.Threading.Tasks.Task<List<string>> t) {
+      try {
+        if (t != null && t.IsCompleted && !t.IsFaulted && t.Result != null) {
+          foreach (string n in t.Result) ApplyTrayImeState(n);
+        }
+      } catch { }
+      if (ReferenceEquals(_trayFindTask, t)) _trayFindTask = null;
+      if (_trayRefreshPending) {
+        _trayRefreshPending = false;
+        RefreshTrayState();
+      }
+    }
+
     private void FindTrayImeElement() {
       try {
         if ((DateTime.Now - _lastTrayImeFindAt).TotalMilliseconds < 1000) return;
         _lastTrayImeFindAt = DateTime.Now;
-        if (_trayFindTask != null && !_trayFindTask.IsCompleted) return;
-        var task = System.Threading.Tasks.Task.Run(() => QueryTrayImeNames());
-        _trayFindTask = task;
-        if (!task.Wait(500)) {
-          DebugLog("TRAY_QUERY_TIMEOUT");
-          return;
-        }
-        foreach (string n in task.Result) ApplyTrayImeState(n);
+        RefreshTrayState();
       } catch (Exception ex) {
         DebugLog("TRAY_IME_FIND_FAIL " + ex.Message);
       }
