@@ -40,7 +40,6 @@ namespace GenDaLangDu {
     private int _lastCaretAbs = -1;
     private bool _lastCaretAbsValid;
     private DateTime _lastUiTextCheckAt = DateTime.MinValue;
-    private string _lastSpoken = "";
     private DateTime _lastPinyinKeyAt = DateTime.MinValue;
     private DateTime _lastPasteAt = DateTime.MinValue;
     private string _lastPunctName;
@@ -73,7 +72,6 @@ namespace GenDaLangDu {
     private string _trayImeLast = "";
     private DateTime _lastTrayImeFindAt = DateTime.MinValue;
     private TrayImeIconTracker _trayImeIcon;
-    private DateTime _lastSpokenAt = DateTime.MinValue;
     private DateTime _lastDeleteSpeakAt = DateTime.MinValue;
     private DateTime _lastDeleteAt = DateTime.MinValue;
     private DateTime _lastZhCommitAt = DateTime.MinValue;
@@ -157,6 +155,8 @@ namespace GenDaLangDu {
     private bool _tsfCompositionReadByDiff;
     private System.Threading.Tasks.Task<FocusedTextResult> _uiTextTask;
     private DateTime _uiTextQueryAt = DateTime.MinValue;
+    private readonly RecentSpeech _recentSpeech = new RecentSpeech();
+    private static readonly object _logLock = new object();
     private System.Threading.Tasks.Task<List<string>> _trayFindTask;
     private System.Threading.Tasks.Task<SelectionInfo> _selInfoTask;
     private AutomationElement _trayImeButton;
@@ -196,7 +196,7 @@ namespace GenDaLangDu {
       _imeTimer = new System.Windows.Forms.Timer();
       /* 50ms 一次足够捕捉 IME 上屏变化，降低后台轮询对系统的打扰 */
       _imeTimer.Interval = 50;
-      _imeTimer.Tick += delegate { CheckIme(); _speaker.FlushAll(); CheckPendingKeySound(); };
+      _imeTimer.Tick += delegate { CheckIme(); CheckPendingKeySound(); };
 
       _uiTimer = new System.Windows.Forms.Timer();
       _uiTimer.Interval = 100;
@@ -302,21 +302,29 @@ namespace GenDaLangDu {
     }
     private void LogTest(string line) {
       if (!_testMode || _testLog == null) return;
-      try { File.AppendAllText(_testLog, DateTime.Now.ToString("HH:mm:ss.fff") + " " + line + "\r\n", new System.Text.UTF8Encoding(false)); } catch { }
+      try {
+        lock (_logLock) {
+          File.AppendAllText(_testLog, DateTime.Now.ToString("HH:mm:ss.fff") + " " + line + "\r\n", new System.Text.UTF8Encoding(false));
+        }
+      } catch { }
     }
 
     private void DebugLog(string line) {
       if (_testLog != null) {
         try {
-          string dir = Path.GetDirectoryName(_testLog);
-          if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
-          File.AppendAllText(_testLog, DateTime.Now.ToString("HH:mm:ss.fff") + " " + line + "\r\n", new System.Text.UTF8Encoding(false));
+          lock (_logLock) {
+            string dir = Path.GetDirectoryName(_testLog);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+            File.AppendAllText(_testLog, DateTime.Now.ToString("HH:mm:ss.fff") + " " + line + "\r\n", new System.Text.UTF8Encoding(false));
+          }
         } catch { }
         return;
       }
       if (_settings == null || !_settings.DebugLog) return;
       try {
-        File.AppendAllText(Path.Combine(Application.StartupPath, "debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " " + line + "\r\n", new System.Text.UTF8Encoding(false));
+        lock (_logLock) {
+          File.AppendAllText(Path.Combine(Application.StartupPath, "debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " " + line + "\r\n", new System.Text.UTF8Encoding(false));
+        }
       } catch { }
     }
 
@@ -1457,18 +1465,9 @@ namespace GenDaLangDu {
       DebugLog("VK_PACKET_ZH_MERGE [" + text + "]");
     }
 
-    private bool RecentlySpoken(string text) {
-      if (_lastSpoken != text) return false;
-      if ((DateTime.Now - _lastSpokenAt).TotalMilliseconds >= 400) return false;
-      /* 若自上次朗读后又按过新键，说明是用户重新输入的相同内容（如"遥遥"），不算重复 */
-      if (_lastKeyAt > _lastSpokenAt) return false;
-      return true;
-    }
+    private bool RecentlySpoken(string text) { return _recentSpeech.IsDuplicate(text, _lastKeyAt, DateTime.Now); }
 
-    private void RememberSpoken(string text) {
-      _lastSpoken = text;
-      _lastSpokenAt = DateTime.Now;
-    }
+    private void RememberSpoken(string text) { _recentSpeech.Mark(text, DateTime.Now); }
 
     private bool TrySpeakInserted(string ins) {
       if (string.IsNullOrEmpty(ins)) return false;
@@ -1602,21 +1601,9 @@ namespace GenDaLangDu {
       return typed && !pasted;
     }
 
-    private static bool IsPureAsciiLetters(string s) {
-      if (string.IsNullOrEmpty(s)) return false;
-      foreach (char c in s) {
-        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) return false;
-      }
-      return true;
-    }
+    private static bool IsPureAsciiLetters(string s) { return SpeechText.IsPureAsciiLetters(s); }
 
-    private static bool IsPureSpaces(string s) {
-      if (string.IsNullOrEmpty(s)) return false;
-      foreach (char c in s) {
-        if (c != ' ') return false;
-      }
-      return true;
-    }
+    private static bool IsPureSpaces(string s) { return SpeechText.IsPureSpaces(s); }
 
     /// <summary>英文直通确认：记忆状态翻成英文，并把缓冲的字母补读出来。</summary>
     private void OnEnPassConfirmed(string letters) {
@@ -1632,20 +1619,7 @@ namespace GenDaLangDu {
     }
 
 
-    private static string StripCompositionLetters(string s) {
-      if (string.IsNullOrEmpty(s)) return s;
-      bool hasCjk = false;
-      foreach (char c in s) {
-        if (KeyTranslator.IsCjk(c)) { hasCjk = true; break; }
-      }
-      if (!hasCjk) return s;
-      System.Text.StringBuilder sb = new System.Text.StringBuilder();
-      foreach (char c in s) {
-        if (KeyTranslator.IsLatinLetter(c)) continue;
-        sb.Append(c);
-      }
-      return sb.ToString();
-    }
+    private static string StripCompositionLetters(string s) { return SpeechText.StripCompositionLetters(s); }
 
     private bool AllowPunctSpeak(string clean) {
       if (clean.Length > 1) return true;
@@ -2534,172 +2508,25 @@ namespace GenDaLangDu {
       }
     }
 
-    private static bool HasChineseText(string s) {
-      if (string.IsNullOrEmpty(s)) return false;
-      foreach (char c in s) {
-        if (KeyTranslator.IsCjk(c)) return true;
-        if (c >= 0x3000 && c <= 0x9FFF) return true;
-        bool fullWidth = c >= 0xFF00 && c <= 0xFFEF &&
-          !(c >= 0xFF10 && c <= 0xFF19) &&
-          !(c >= 0xFF21 && c <= 0xFF3A) &&
-          !(c >= 0xFF41 && c <= 0xFF5A);
-        if (fullWidth) return true;
-      }
-      return false;
-    }
+    private static bool HasChineseText(string s) { return SpeechText.HasChineseText(s); }
 
-    private static string LastLine(string s) {
-      if (string.IsNullOrEmpty(s)) return s;
-      int idx = s.LastIndexOf('\n');
-      return idx >= 0 ? s.Substring(idx + 1) : s;
-    }
+    private static string LastLine(string s) { return SpeechText.LastLine(s); }
 
-    private static bool IsCnNumeral(char c) {
-      return "零〇一二三四五六七八九十百千两".IndexOf(c) >= 0;
-    }
+    private static bool IsCnNumeral(char c) { return SpeechText.IsCnNumeral(c); }
 
-    private static string StripHeading(string s) {
-      if (string.IsNullOrEmpty(s) || s[0] != '第') return s;
-      int j = 1;
-      bool hasNum = false;
-      while (j < s.Length) {
-        char c = s[j];
-        if (char.IsDigit(c) || IsCnNumeral(c)) {
-          hasNum = true;
-          j++;
-        } else if (c == ' ') {
-          j++;
-        } else {
-          break;
-        }
-      }
-      if (!hasNum || j >= s.Length || s[j] != '章') return s;
-      int k = j + 1;
-      while (k < s.Length && (s[k] == ' ' || s[k] == '\t' || s[k] == '\r' || s[k] == '\n')) k++;
-      string rest = s.Substring(k);
-      return rest.Length > 0 ? rest : s;
-    }
+    private static string StripHeading(string s) { return SpeechText.StripHeading(s); }
 
-    private static string FilterForSpeech(string s) {
-      System.Text.StringBuilder sb = new System.Text.StringBuilder();
-      foreach (char c in s) {
-        bool fullWidth = c >= 0xFF00 && c <= 0xFFEF &&
-          !(c >= 0xFF10 && c <= 0xFF19) &&
-          !(c >= 0xFF21 && c <= 0xFF3A) &&
-          !(c >= 0xFF41 && c <= 0xFF5A);
-        if (c == '\'' || c == '"') continue;
-        if (KeyTranslator.IsCjk(c) || (c >= 0x3000 && c <= 0x9FFF) ||
-            (c >= '0' && c <= '9') || (c >= 0xFF10 && c <= 0xFF19) ||
-            fullWidth || KeyTranslator.PunctName(c) != null) {
-          sb.Append(c);
-        }
-      }
-      return sb.ToString();
-    }
+    private static string FilterForSpeech(string s) { return SpeechText.FilterForSpeech(s); }
 
-    private static bool HasCjk(string s) {
-      if (string.IsNullOrEmpty(s)) return false;
-      foreach (char c in s) {
-        if (KeyTranslator.IsCjk(c)) return true;
-      }
-      return false;
-    }
-    private static bool ContainsImeSpeakable(string s) {
-      foreach (char c in s) {
-        bool fullWidth = c >= 0xFF00 && c <= 0xFFEF &&
-          !(c >= 0xFF10 && c <= 0xFF19) &&
-          !(c >= 0xFF21 && c <= 0xFF3A) &&
-          !(c >= 0xFF41 && c <= 0xFF5A);
-        if (KeyTranslator.IsCjk(c) || (c >= 0x3000 && c <= 0x9FFF) ||
-            fullWidth || KeyTranslator.PunctName(c) != null) return true;
-      }
-      return false;
-    }
-    private static string PunctSpokenForm(string s) {
-      bool hasCjk = false;
-      foreach (char c in s) {
-        if (KeyTranslator.IsCjk(c)) { hasCjk = true; break; }
-      }
-      if (hasCjk) return s;
-      System.Text.StringBuilder sb = new System.Text.StringBuilder();
-      foreach (char c in s) {
-        string n = KeyTranslator.PunctName(c);
-        if (n != null) {
-          if (sb.Length > 0) sb.Append("，");
-          sb.Append(n);
-        } else {
-          sb.Append(c);
-        }
-      }
-      return sb.ToString();
-    }
+    private static bool HasCjk(string s) { return SpeechText.HasCjk(s); }
+    private static bool ContainsImeSpeakable(string s) { return SpeechText.ContainsImeSpeakable(s); }
+    private static string PunctSpokenForm(string s) { return SpeechText.PunctSpokenForm(s); }
 
-    private static string DiffInserted(string oldT, string newT) {
-      if (string.IsNullOrEmpty(newT)) return "";
-      if (string.IsNullOrEmpty(oldT)) return newT;
-      if (newT.StartsWith(oldT)) return newT.Substring(oldT.Length);
-      if (oldT.StartsWith(newT)) return "";
-      int p = 0;
-      int maxP = Math.Min(oldT.Length, newT.Length);
-      while (p < maxP && oldT[p] == newT[p]) p++;
-      int sOld = oldT.Length - 1;
-      int sNew = newT.Length - 1;
-      while (sOld >= p && sNew >= p && oldT[sOld] == newT[sNew]) {
-        sOld--;
-        sNew--;
-      }
-      if (sNew >= p) return newT.Substring(p, sNew - p + 1);
-      return "";
-    }
+    private static string DiffInserted(string oldT, string newT) { return SpeechText.DiffInserted(oldT, newT); }
 
-    private static bool TryCaretDiff(string oldT, string newT, int caret, out string diff) {
-      diff = null;
-      if (oldT == null || caret < 0) return false;
-      int delta = newT.Length - oldT.Length;
-      int oldCaret = caret - delta;
-      if (oldCaret < 0 || oldCaret > oldT.Length) return false;
-      if (caret < 0 || caret > newT.Length) return false;
-      int maxP = Math.Min(caret, oldCaret);
-      int p = 0;
-      while (p < maxP && newT[p] == oldT[p]) p++;
-      // 从末尾对齐共同后缀，防止输入法上屏瞬间 WPS 光标滞后导致把光标后的旧文字算进新内容
-      int sOld = oldT.Length - 1;
-      int sNew = newT.Length - 1;
-      while (sOld >= p && sNew >= p && oldT[sOld] == newT[sNew]) {
-        sOld--;
-        sNew--;
-      }
-      int end = Math.Min(caret, sNew + 1);
-      int len = end - p;
-      if (len <= 0 || len > 12) return false;
-      diff = newT.Substring(p, len);
-      return true;
-    }
+    private static bool TryCaretDiff(string oldT, string newT, int caret, out string diff) { string d; bool ok = SpeechText.TryCaretDiff(oldT, newT, caret, out d); diff = d; return ok; }
 
-    private static string ComputeInserted(string oldT, string newT, int caret) {
-      string d;
-      // 1) 平移对齐：覆盖“连续上屏 + 窗口右移”（主路径，不依赖光标）
-      d = ShiftDiff(oldT, newT);
-      if (!string.IsNullOrEmpty(d)) {
-        d = LastLine(d);
-        d = StripHeading(d);
-        return d;
-      }
-      // 2) 前后缀夹逼：覆盖中间插入/替换
-      d = DiffInserted(oldT, newT);
-      if (!string.IsNullOrEmpty(d)) {
-        d = LastLine(d);
-        d = StripHeading(d);
-        return d;
-      }
-      // 3) 光标兜底
-      if (TryCaretDiff(oldT, newT, caret, out d)) {
-        d = LastLine(d);
-        d = StripHeading(d);
-        return d;
-      }
-      return "";
-    }
+    private static string ComputeInserted(string oldT, string newT, int caret) { return SpeechText.ComputeInserted(oldT, newT, caret); }
 
     /// <summary>
     /// 智能差异：优先用“旧光标→新光标区间”直读刚输入的内容
@@ -2721,7 +2548,7 @@ namespace GenDaLangDu {
           }
         }
       }
-      return ComputeInserted(oldT, newT, caret);
+      return SpeechText.ComputeInserted(oldT, newT, caret);
     }
 
     /// <summary>
@@ -2729,24 +2556,7 @@ namespace GenDaLangDu {
     /// 末尾多出的字符即为刚输入的内容。解决连续多字上屏只截到
     /// 末尾、以及文档变长导致窗口整体右移的误判。
     /// </summary>
-    private static string ShiftDiff(string oldT, string newT) {
-      if (string.IsNullOrEmpty(oldT) || string.IsNullOrEmpty(newT)) return "";
-      int maxShift = Math.Min(12, oldT.Length);
-      for (int s = 0; s <= maxShift; s++) {
-        if (newT.Length - s <= 0) break;
-        int cmp = Math.Min(newT.Length - s, oldT.Length - s);
-        if (cmp <= 0) continue;
-        bool ok = true;
-        for (int i = 0; i < cmp; i++) {
-          if (newT[i] != oldT[s + i]) { ok = false; break; }
-        }
-        if (!ok) continue;
-        int extra = newT.Length - (oldT.Length - s);
-        if (extra > 0 && extra <= 12) return newT.Substring(newT.Length - extra);
-        return "";
-      }
-      return "";
-    }
+    private static string ShiftDiff(string oldT, string newT) { return SpeechText.ShiftDiff(oldT, newT); }
 
     private static bool IsModifierKey(uint vk) {
       return vk == 0x10 || vk == 0x11 || vk == 0x12 || vk == 0x5B || vk == 0x5C ||

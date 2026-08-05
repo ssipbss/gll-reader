@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
@@ -9,18 +9,11 @@ using System.Runtime.InteropServices.WindowsRuntime;
 
 namespace GenDaLangDu {
   public sealed class Speaker : IDisposable {
-    private enum ItemKind { SpeakZh, SpeakEn, SpeakEnWord, SpeakEnSsml, SetVoices, Cancel, Stop }
 
-    private sealed class WorkItem {
-      public ItemKind Kind;
-      public string Text;
-      public string Ssml;
-    }
-
-    private readonly BlockingCollection<WorkItem> _queue = new BlockingCollection<WorkItem>();
-    private int _prevBatchCount = 1;
+    private readonly BlockingCollection<SpeechItem> _queue = new BlockingCollection<SpeechItem>();
     private DateTime _lastEnqueueAt = DateTime.MinValue;
     private DateTime _prevEnqueueAt = DateTime.MinValue;
+    private static long _nextSpeechId;
     private readonly ManualResetEvent _ready = new ManualResetEvent(false);
     private Thread _thread;
     private dynamic _zh;
@@ -88,7 +81,7 @@ namespace GenDaLangDu {
       _ready.Set();
 
       while (!_disposed) {
-        WorkItem first;
+        SpeechItem first;
         try { first = _queue.Take(); } catch { break; }
         try {
           ProcessBatch(first);
@@ -98,7 +91,7 @@ namespace GenDaLangDu {
       }
     }
 
-    private void ProcessBatch(WorkItem first) {
+    private void ProcessBatch(SpeechItem first) {
       _speaking = true;
       try {
         ProcessBatchCore(first);
@@ -107,94 +100,39 @@ namespace GenDaLangDu {
       }
     }
 
-    private void ProcessBatchCore(WorkItem first) {
-      Diag("W_BATCH kind=" + first.Kind);
-      List<WorkItem> items = new List<WorkItem>();
+    private void ProcessBatchCore(SpeechItem first) {
+      List<SpeechItem> items = new List<SpeechItem>();
       items.Add(first);
-      WorkItem tmp;
-      bool got = _queue.TryTake(out tmp, 0);
-      if (got) items.Add(tmp);
+      SpeechItem tmp;
       while (_queue.TryTake(out tmp, 0)) items.Add(tmp);
-      while (_queue.TryTake(out tmp, 0)) items.Add(tmp);
-      Diag("W_DRAINED " + items.Count);
-      System.Text.StringBuilder zh = new System.Text.StringBuilder();
-      System.Text.StringBuilder enPending = new System.Text.StringBuilder();
-      System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, bool>> enWords =
-        new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, bool>>();
-      System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, string>> enSsmls =
-        new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, string>>();
-      bool cancelled = false;
-      bool stop = false;
-
-      foreach (WorkItem it in items) {
-        Diag("W_ITEM " + it.Kind);
-        switch (it.Kind) {
-          case ItemKind.SpeakZh:
-            if (!cancelled) {
-              zh.Append(it.Text);
-            }
-            break;
-          case ItemKind.SpeakEn:
-            if (!cancelled) {
-              enPending.Append(it.Text.ToUpperInvariant());
-            }
-            break;
-          case ItemKind.SpeakEnWord:
-            /* 功能键英文单词：单独成句，保持正常大小写（Enter/Backspace），
-               中文音色不会逐字母拼读，也不会和前后按键拼成 BackspaceSpace */
-            if (!cancelled) {
-              if (enPending.Length > 0) {
-                enWords.Add(new System.Collections.Generic.KeyValuePair<string, bool>(
-                  enPending.ToString(), false));
-                enPending.Clear();
-              }
-              enWords.Add(new System.Collections.Generic.KeyValuePair<string, bool>(it.Text, true));
-            }
-            break;
-          case ItemKind.SpeakEnSsml:
-            /* 组合键带单个字母：字母用 say-as characters 包裹，念得清楚（Control A） */
-            if (!cancelled) {
-              enSsmls.Add(new System.Collections.Generic.KeyValuePair<string, string>(it.Text, it.Ssml));
-            }
-            break;
-          case ItemKind.SetVoices:
-            try {
-              ApplyVoices(_zhVoice, _enVoice);
-            } catch (Exception ex) {
-              if (Log != null) Log("SETVOICES_ERR:" + ex.Message);
-            }
-            break;
-          case ItemKind.Cancel:
-            cancelled = true;
-            zh.Length = 0;
-            enPending.Length = 0;
-            enWords.Clear();
-            enSsmls.Clear();
-            Cancel(_zh);
-            Cancel(_en);
-            break;
-          case ItemKind.Stop:
-            stop = true;
-            cancelled = true;
-            zh.Length = 0;
-            enPending.Length = 0;
-            enWords.Clear();
-            enSsmls.Clear();
-            Cancel(_zh);
-            Cancel(_en);
-            break;
+      if (Log != null) {
+        System.Text.StringBuilder ids = new System.Text.StringBuilder();
+        foreach (SpeechItem it in items) {
+          if (ids.Length > 0) ids.Append(",");
+          ids.Append(it.Id);
+        }
+        Log("W_BATCH ids=[" + ids + "]");
+      }
+      SpeechBatchPlan plan = SpeechBatchPlanner.Plan(items);
+      if (plan.SetVoices) {
+        try {
+          ApplyVoices(_zhVoice, _enVoice);
+        } catch (Exception ex) {
+          if (Log != null) Log("SETVOICES_ERR:" + ex.Message);
         }
       }
-
-      int speakCount = 0;
-      foreach (WorkItem it in items) {
-        if (it.Kind == ItemKind.SpeakZh || it.Kind == ItemKind.SpeakEn ||
-            it.Kind == ItemKind.SpeakEnWord) speakCount++;
+      if (Log != null) {
+        Log("W_PLAN zh=[" + plan.Zh + "] en=[" + plan.En + "] words=" +
+            plan.EnWords.Count + " stop=" + (plan.Stop ? 1 : 0) +
+            " cancel=" + (plan.Cancelled ? 1 : 0));
       }
-      _prevBatchCount = speakCount;
-
-      FlushBatchSpeech(zh, enPending, enWords, enSsmls);
-      if (stop) _disposed = true;
+      if (plan.Cancelled) {
+        Cancel(_zh);
+        Cancel(_en);
+      }
+      FlushBatchSpeech(new System.Text.StringBuilder(plan.Zh),
+        new System.Text.StringBuilder(plan.En), plan.EnWords, plan.EnSsmls);
+      if (plan.Stop) _disposed = true;
     }
 
     private void FlushBatchSpeech(System.Text.StringBuilder zh,
@@ -616,7 +554,7 @@ namespace GenDaLangDu {
     public void RefreshVoices(string zhDesc, string enDesc) {
       _zhVoice = zhDesc ?? "";
       _enVoice = enDesc ?? "";
-      try { _queue.Add(new WorkItem { Kind = ItemKind.SetVoices }); } catch { }
+      try { _queue.Add(new SpeechItem { Kind = SpeechItemKind.SetVoices }); } catch { }
     }
 
     public void WarmUp() {
@@ -627,28 +565,31 @@ namespace GenDaLangDu {
     public void SpeakZh(string text) {
       if (string.IsNullOrEmpty(text)) return;
       _stopRequested = false;
-      if (Log != null) Log("ZH:" + text);
+      long id = Interlocked.Increment(ref _nextSpeechId);
+      if (Log != null) Log("ZH:" + id + ":" + text);
       _prevEnqueueAt = _lastEnqueueAt;
       _lastEnqueueAt = DateTime.Now;
-      _queue.Add(new WorkItem { Kind = ItemKind.SpeakZh, Text = text });
+      _queue.Add(new SpeechItem { Id = id, Kind = SpeechItemKind.SpeakZh, Text = text });
     }
 
     public void SpeakEn(string text) {
       if (string.IsNullOrEmpty(text)) return;
       _stopRequested = false;
-      if (Log != null) Log("EN:" + text);
+      long id = Interlocked.Increment(ref _nextSpeechId);
+      if (Log != null) Log("EN:" + id + ":" + text);
       _prevEnqueueAt = _lastEnqueueAt;
       _lastEnqueueAt = DateTime.Now;
-      _queue.Add(new WorkItem { Kind = ItemKind.SpeakEn, Text = text });
+      _queue.Add(new SpeechItem { Id = id, Kind = SpeechItemKind.SpeakEn, Text = text });
     }
 
     public void SpeakEnWord(string text) {
       if (string.IsNullOrEmpty(text)) return;
       _stopRequested = false;
-      if (Log != null) Log("ENW:" + text);
+      long id = Interlocked.Increment(ref _nextSpeechId);
+      if (Log != null) Log("ENW:" + id + ":" + text);
       _prevEnqueueAt = _lastEnqueueAt;
       _lastEnqueueAt = DateTime.Now;
-      _queue.Add(new WorkItem { Kind = ItemKind.SpeakEnWord, Text = text });
+      _queue.Add(new SpeechItem { Id = id, Kind = SpeechItemKind.SpeakEnWord, Text = text });
     }
 
     public void SpeakEnSsml(string plain, string ssml) {
@@ -657,29 +598,29 @@ namespace GenDaLangDu {
         return;
       }
       _stopRequested = false;
-      if (Log != null) Log("ENW:" + plain + " SSML=1");
+      long id = Interlocked.Increment(ref _nextSpeechId);
+      if (Log != null) Log("ENS:" + id + ":" + plain);
       _prevEnqueueAt = _lastEnqueueAt;
       _lastEnqueueAt = DateTime.Now;
-      _queue.Add(new WorkItem { Kind = ItemKind.SpeakEnSsml, Text = plain, Ssml = ssml });
+      _queue.Add(new SpeechItem { Id = id, Kind = SpeechItemKind.SpeakEnSsml, Text = plain, Ssml = ssml });
     }
 
 
-    public void FlushAll() { }
 
     public void Stop() {
       try {
         /* 立即打断正在播放的音频（播放线程正阻塞在 PlaySync，队列命令无法处理） */
         _stopRequested = true;
         mciSendString("stop gll_snd", null, 0, IntPtr.Zero);
-        WorkItem tmp;
+        SpeechItem tmp;
         while (_queue.TryTake(out tmp)) { }
-        _queue.Add(new WorkItem { Kind = ItemKind.Cancel });
+        _queue.Add(new SpeechItem { Kind = SpeechItemKind.Cancel });
       } catch { }
     }
 
     public void Dispose() {
       if (_disposed) return;
-      try { _queue.Add(new WorkItem { Kind = ItemKind.Stop }); } catch { }
+      try { _queue.Add(new SpeechItem { Kind = SpeechItemKind.Stop }); } catch { }
       if (_thread != null && _thread.IsAlive) _thread.Join(2000);
       try { _ready.Dispose(); } catch { }
     }
