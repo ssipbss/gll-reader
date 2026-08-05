@@ -156,6 +156,7 @@ namespace GenDaLangDu {
     private readonly Dictionary<uint, DateTime> _tsfCommitAt = new Dictionary<uint, DateTime>();
     private bool _tsfCompositionReadByDiff;
     private System.Threading.Tasks.Task<FocusedTextResult> _uiTextTask;
+    private DateTime _uiTextQueryAt = DateTime.MinValue;
     private System.Threading.Tasks.Task<List<string>> _trayFindTask;
     private System.Threading.Tasks.Task<SelectionInfo> _selInfoTask;
     private AutomationElement _trayImeButton;
@@ -2355,14 +2356,16 @@ namespace GenDaLangDu {
            清空会导致切回中文后把旧文字当新输入重读 */
         return;
       }
-      string elementId;
-      string uiDiag;
-      int caret;
-      bool caretAbs;
-      string t;
       if (_uiTextTask != null && !_uiTextTask.IsCompleted) {
-        DebugLog("UI_QUERY_BUSY");
-        return;
+        /* 查询卡住超过 2 秒：放弃旧查询并允许发起新查询，
+           避免差异通道被一个永不返回的 UIA 调用永久堵死 */
+        if ((DateTime.Now - _uiTextQueryAt).TotalMilliseconds > 2000) {
+          _uiTextTask = null;
+          DebugLog("UI_QUERY_ABANDON");
+        } else {
+          DebugLog("UI_QUERY_BUSY");
+          return;
+        }
       }
       var ftask = System.Threading.Tasks.Task.Run(() => {
         var r = new FocusedTextResult();
@@ -2370,16 +2373,30 @@ namespace GenDaLangDu {
         return r;
       });
       _uiTextTask = ftask;
-      if (!ftask.Wait(500)) {
-        DebugLog("UI_QUERY_TIMEOUT");
-        return;
-      }
-      FocusedTextResult fr = ftask.Result;
-      t = fr.Text;
-      elementId = fr.ElementId;
-      uiDiag = fr.UiDiag;
-      caret = fr.Caret;
-      caretAbs = fr.CaretAbs;
+      _uiTextQueryAt = DateTime.Now;
+      /* 不阻塞界面线程：查询完成后回到界面线程再处理结果，
+         界面线程不再被慢速 UIA 调用拖住（上屏通知、按键、鼠标都不再排队等它） */
+      ftask.ContinueWith(t => {
+        try {
+          if (_uiTextTask != t) return; /* 已被新查询替代或放弃，结果作废 */
+          _uiTextTask = null;
+          if (t.IsFaulted || t.IsCanceled) return;
+          FocusedTextResult fr = t.Result;
+          if (InvokeRequired) {
+            try { BeginInvoke((MethodInvoker)(() => ApplyUiTextResult(fr))); } catch { }
+          } else {
+            ApplyUiTextResult(fr);
+          }
+        } catch { }
+      }, System.Threading.Tasks.TaskScheduler.Default);
+    }
+
+    private void ApplyUiTextResult(FocusedTextResult fr) {
+      string t = fr.Text;
+      string elementId = fr.ElementId;
+      string uiDiag = fr.UiDiag;
+      int caret = fr.Caret;
+      bool caretAbs = fr.CaretAbs;
       if (t == null) {
         if (_lastUiElement != elementId) {
           _lastUiElement = elementId;
