@@ -803,6 +803,9 @@ namespace GenDaLangDu {
         if (string.IsNullOrEmpty(text)) return;
         _tsfActivePids.Add(pid);
         _tsfCommitAt[pid] = DateTime.Now;
+        /* 上屏提交 = 用户按过上屏键：补登记，供文档差异通道判断“正在打字” */
+        _lastKeyAt = DateTime.Now;
+        _lastTypingCommitKeyAt = DateTime.Now;
         if (_tsfActivePids.Count > 96) {
           List<uint> dead = new List<uint>();
           foreach (KeyValuePair<uint, DateTime> kv in _tsfCommitAt) {
@@ -836,6 +839,7 @@ namespace GenDaLangDu {
         _tsfCompositionReadByDiff = false;
         if (diffSpoke) {
           DebugLog("TSF_COMMIT_SKIP diff_spoke");
+          CancelPendingKeySound();
           return;
         }
         if (!RecentlySpoken(text)) {
@@ -854,7 +858,13 @@ namespace GenDaLangDu {
     private void OnTsfState(uint pid, bool composing) {
       try {
         if (!_listening) return;
-        if (composing) _tsfCompositionReadByDiff = false;
+        if (composing) {
+          _tsfCompositionReadByDiff = false;
+          /* 组字开始 = 用户按过字母键：本地按键被 TSF 抑制（KEY_SUPPRESS_TSF）
+             时程序看不到按键，这里补登记打字活动，避免新上屏的字被误拦 */
+          _lastKeyAt = DateTime.Now;
+          _lastPinyinKeyAt = DateTime.Now;
+        }
         DebugLog("TSF_STATE pid=" + pid + " composing=" + composing);
       } catch { }
     }
@@ -871,8 +881,22 @@ namespace GenDaLangDu {
         DebugLog("SEL_STOP_ESC");
         return;
       }
-      /* 程序自己注入的复制键（keybd_event Ctrl+C）不朗读、不处理 */
-      if (e.IsInjected) return;
+      /* 注入式按键（远程输入/自动化）：不朗读、不处理，
+         但登记打字活动，让文档差异通道能把远程打出的中文正常朗读；
+         注入的 Ctrl+V 仍记为粘贴，粘贴内容不朗读 */
+      if (e.IsInjected) {
+        _lastKeyAt = DateTime.Now;
+        DebugLog("INJ_KEY vk=0x" + e.Vk.ToString("X"));
+        if ((e.Vk == 0x56 && CtrlHeld()) || (e.Vk == 0x2D && ShiftHeld())) {
+          _lastPasteAt = DateTime.Now;
+        } else if ((e.Vk >= 0x30 && e.Vk <= 0x39) ||
+                   (e.Vk >= 0x41 && e.Vk <= 0x5A) ||
+                   e.Vk == 0x20 || e.Vk == 0x0D) {
+          _lastPinyinKeyAt = DateTime.Now;
+          _lastTypingCommitKeyAt = DateTime.Now;
+        }
+        return;
+      }
       if (e.IsUp) {
         HandleKeyUp(e);
         return;
@@ -997,12 +1021,17 @@ namespace GenDaLangDu {
               ScheduleImeCheck();
               return;
             }
-            /* 非组字状态按空格 = 真正的空格：提示音排队；
-               若随后有中文上屏（漏判组字），上屏事件会取消这个提示音 */
-            _pendingKeySoundPath = SpaceSoundPath;
-            _pendingKeySoundAt = DateTime.Now;
-            DebugLog("KEY_SOUND_DEFER [" + System.IO.Path.GetFileName(SpaceSoundPath) + "]");
-            CheckUiText();
+            /* 非组字状态按空格：可读文档的程序（Codex/Edge 等）按键本身不发声，
+               由文档差异确认“空格真的上屏”后再响（TrySpeakInserted）；
+               WPS 等读不了文档内容的程序，组字状态由 IMM/TSF 精确跟踪，
+               非组字按空格即真正的空格：提示音排队，若随后有中文上屏则取消 */
+            _lastPinyinKeyAt = DateTime.Now;
+            if (TextReader.IsKnownSlowApp()) {
+              _pendingKeySoundPath = SpaceSoundPath;
+              _pendingKeySoundAt = DateTime.Now;
+              DebugLog("KEY_SOUND_DEFER [" + System.IO.Path.GetFileName(SpaceSoundPath) + "]");
+              CheckUiText();
+            }
             ScheduleImeCheck();
             return;
           }
@@ -1447,10 +1476,26 @@ namespace GenDaLangDu {
         DebugLog("UI_INSERT_SKIP tsf_composing");
         return false;
       }
+      /* 文本里真正出现了空格（而不是按了空格键）：先于 TSF 去重保护处理，
+         否则“中文刚上屏后立刻按真实空格”会被 tsf_recent 误拦 */
+      if (IsPureSpaces(ins)) {
+        if (HasTypingSignature()) {
+          RequestKeySound(SpaceSoundPath);
+          DebugLog("UI_SPACE [" + ins.Length + "]");
+        } else {
+          DebugLog("UI_SPACE_SKIP typing");
+        }
+        return true;
+      }
       DateTime tsfAt0;
       if (_tsfActivePids.Contains(pid0) && _tsfCommitAt.TryGetValue(pid0, out tsfAt0)) {
         double since0 = (DateTime.Now - tsfAt0).TotalMilliseconds;
         if (since0 < 1500) {
+          /* 差异一次抓到“字+空格”：字由 TSF 通道读过，空格仍要响 */
+          if (ins.IndexOf(' ') >= 0 && HasTypingSignature()) {
+            RequestKeySound(SpaceSoundPath);
+            DebugLog("UI_SPACE_MIXED recent_tsf");
+          }
           DebugLog("UI_INSERT_SKIP tsf_recent");
           return false;
         }
@@ -1534,6 +1579,11 @@ namespace GenDaLangDu {
       _composing = false;
       SpeakZh(spk);
       RememberSpoken(spk);
+      if (ins.IndexOf(' ') >= 0) {
+        /* 差异一次抓到“字+空格”时：先读字，空格提示音排在其后 */
+        RequestKeySound(SpaceSoundPath);
+        DebugLog("UI_SPACE_MIXED [" + ins + "]");
+      }
       _lastDiffCommitText = spk;
       _lastDiffCommitAt = DateTime.Now;
       if (_tsfActivePids.Contains(pid0)) _tsfCompositionReadByDiff = true;
@@ -1555,6 +1605,14 @@ namespace GenDaLangDu {
       if (string.IsNullOrEmpty(s)) return false;
       foreach (char c in s) {
         if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) return false;
+      }
+      return true;
+    }
+
+    private static bool IsPureSpaces(string s) {
+      if (string.IsNullOrEmpty(s)) return false;
+      foreach (char c in s) {
+        if (c != ' ') return false;
       }
       return true;
     }
@@ -2410,7 +2468,7 @@ namespace GenDaLangDu {
         return;
       }
       if (inserted.Length > 20) return;
-      if (inserted.Trim().Length == 0) return;
+      if (inserted.Trim().Length == 0 && inserted.IndexOf(' ') < 0) return;
       if (inserted.Length > MaxUiDiffLen) {
         DebugLog("UI_DIFF_SKIP_LONG [" + inserted + "]");
         return;

@@ -203,8 +203,14 @@ namespace GenDaLangDu {
         System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, string>> enSsmls) {
       if (zh.Length > 0) {
         if (Log != null) Log("ZH_MERGE [" + zh + "]");
-        if (_zhIsRt && _zhRt != null) SpeakRtSync(_zhRt, zh.ToString(), "ZH", _rate, false);
-        else SpeakSync(_zh, zh.ToString(), "ZH", ref _lastRateZh, ref _lastVolumeZh, _rate, false);
+        DateTime t0 = DateTime.Now;
+        if (Log != null) Log("ZH_PLAY_START [" + zh + "]");
+        try {
+          if (_zhIsRt && _zhRt != null) SpeakRtSync(_zhRt, zh.ToString(), "ZH", _rate, false);
+          else SpeakSync(_zh, zh.ToString(), "ZH", ref _lastRateZh, ref _lastVolumeZh, _rate, false);
+        } finally {
+          if (Log != null) Log("ZH_PLAY_END [" + zh + "] ms=" + (int)(DateTime.Now - t0).TotalMilliseconds);
+        }
         zh.Clear();
       }
       if (enPending.Length > 0) {
@@ -320,7 +326,7 @@ namespace GenDaLangDu {
     }
 
     /// <summary>用 mciSendString 播放 WAV：可被其它线程立即停止（SoundPlayer.Stop 跨线程无效）。</summary>
-    private static void PlayWavBlocking(string path) {
+    private void PlayWavBlocking(string path) {
       const string alias = "gll_snd";
       try {
         /* 停止请求后到达的音频直接丢弃，不再出声（合成无法中断，但可以不放出来） */
@@ -329,9 +335,11 @@ namespace GenDaLangDu {
           return;
         }
         mciSendString("close " + alias, null, 0, IntPtr.Zero);
-        mciSendString("open \"" + path + "\" type waveaudio alias " + alias, null, 0, IntPtr.Zero);
+        uint er = mciSendString("open \"" + path + "\" type waveaudio alias " + alias, null, 0, IntPtr.Zero);
+        if (er != 0 && Log != null) Log("PLAY_OPEN_ERR " + er + " " + path);
         mciSendString("play " + alias, null, 0, IntPtr.Zero);
         _stopRequested = false;
+        if (Log != null) Log("PLAY_START " + System.IO.Path.GetFileName(path));
         while (true) {
           if (_stopRequested) {
             mciSendString("stop " + alias, null, 0, IntPtr.Zero);
@@ -344,6 +352,7 @@ namespace GenDaLangDu {
           Thread.Sleep(50);
         }
         mciSendString("close " + alias, null, 0, IntPtr.Zero);
+        if (Log != null) Log("PLAY_DONE " + System.IO.Path.GetFileName(path));
       } catch { }
     }
 
