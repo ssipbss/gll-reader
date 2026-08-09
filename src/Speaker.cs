@@ -11,11 +11,14 @@ namespace GenDaLangDu {
   public sealed class Speaker : IDisposable {
 
     private readonly BlockingCollection<SpeechItem> _queue = new BlockingCollection<SpeechItem>();
+    private readonly BlockingCollection<PreparedSpeech> _readyQueue = new BlockingCollection<PreparedSpeech>();
     private DateTime _lastEnqueueAt = DateTime.MinValue;
     private DateTime _prevEnqueueAt = DateTime.MinValue;
     private static long _nextSpeechId;
-    private readonly ManualResetEvent _ready = new ManualResetEvent(false);
+    private readonly ManualResetEvent _initReady = new ManualResetEvent(false);
     private Thread _thread;
+    private Thread _playerThread;
+    private volatile int _generation;
     private dynamic _zh;
     private dynamic _en;
     private volatile string _zhVoice = "";
@@ -28,7 +31,14 @@ namespace GenDaLangDu {
     private volatile bool _zhIsRt;
     private volatile bool _enIsRt;
     private volatile bool _speaking;
+    private volatile bool _preparing;
     private static CancellationTokenSource _rtCancel = new CancellationTokenSource();
+
+    private sealed class PreparedSpeech {
+      public int Generation;
+      public string Path;
+      public string Tag;
+    }
 
     public Action<string> Log { get; set; }
 
@@ -44,15 +54,41 @@ namespace GenDaLangDu {
 
     /// <summary>是否有语音正在朗读或排队（按键音效据此让路，避免覆盖中文朗读）</summary>
     public bool IsBusy {
-      get { return _speaking || _queue.Count > 0; }
+      get { return _speaking || _preparing || _queue.Count > 0 || _readyQueue.Count > 0; }
     }
 
     public Speaker() {
+      /* 播放线程：只负责按顺序播放已合成好的音频；
+         合成线程（Worker）在播放期间预合成后续内容，隐藏合成延迟 */
+      _playerThread = new Thread(PlayerLoop);
+      _playerThread.IsBackground = true;
+      try { _playerThread.SetApartmentState(ApartmentState.STA); } catch { }
+      _playerThread.Start();
       _thread = new Thread(Worker);
       _thread.IsBackground = true;
       try { _thread.SetApartmentState(ApartmentState.STA); } catch { }
       _thread.Start();
-      _ready.WaitOne(5000);
+      _initReady.WaitOne(5000);
+    }
+
+    private void PlayerLoop() {
+      while (true) {
+        PreparedSpeech ps;
+        try { ps = _readyQueue.Take(); } catch { break; }
+        if (ps.Tag == null) break;
+        /* Stop/Cancel 后作废：跳过预合成的过期内容并清理文件 */
+        if (ps.Generation != _generation) {
+          try { System.IO.File.Delete(ps.Path); } catch { }
+          continue;
+        }
+        _speaking = true;
+        try {
+          PlayWavBlocking(ps.Path);
+        } finally {
+          _speaking = false;
+        }
+        try { System.IO.File.Delete(ps.Path); } catch { }
+      }
     }
 
     private void Worker() {
@@ -78,26 +114,22 @@ namespace GenDaLangDu {
         _enRt = new SpeechSynthesizer();
         Diag("W_RT_OK");
       } catch { }
-      _ready.Set();
+      _initReady.Set();
 
       while (!_disposed) {
         SpeechItem first;
         try { first = _queue.Take(); } catch { break; }
         try {
-          ProcessBatch(first);
+          ProcessBatchCore(first);
         } catch (Exception ex) {
           if (Log != null) Log("WORKER_ERR:" + ex.Message);
         }
       }
+      try { _readyQueue.Add(new PreparedSpeech { Tag = null }); } catch { }
     }
 
     private void ProcessBatch(SpeechItem first) {
-      _speaking = true;
-      try {
-        ProcessBatchCore(first);
-      } finally {
-        _speaking = false;
-      }
+      ProcessBatchCore(first);
     }
 
     private void ProcessBatchCore(SpeechItem first) {
@@ -130,25 +162,29 @@ namespace GenDaLangDu {
         Cancel(_zh);
         Cancel(_en);
       }
-      FlushBatchSpeech(new System.Text.StringBuilder(plan.Zh),
-        new System.Text.StringBuilder(plan.En), plan.EnWords, plan.EnSsmls);
+      _preparing = true;
+      try {
+        PrepareBatchSpeech(new System.Text.StringBuilder(plan.Zh),
+          new System.Text.StringBuilder(plan.En), plan.EnWords, plan.EnSsmls);
+      } finally {
+        _preparing = false;
+      }
       if (plan.Stop) _disposed = true;
     }
 
-    private void FlushBatchSpeech(System.Text.StringBuilder zh,
+    /// <summary>把一批计划文本合成为音频后投入就绪队列（播放线程按序播放）。
+    /// 合成不阻塞播放：播放当前音频期间即可预合成下一批。</summary>
+    private void PrepareBatchSpeech(System.Text.StringBuilder zh,
         System.Text.StringBuilder enPending,
         System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, bool>> enWords,
         System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, string>> enSsmls) {
+      int gen = _generation;
       if (zh.Length > 0) {
         if (Log != null) Log("ZH_MERGE [" + zh + "]");
-        DateTime t0 = DateTime.Now;
-        if (Log != null) Log("ZH_PLAY_START [" + zh + "]");
-        try {
-          if (_zhIsRt && _zhRt != null) SpeakRtSync(_zhRt, zh.ToString(), "ZH", _rate, false);
-          else SpeakSync(_zh, zh.ToString(), "ZH", ref _lastRateZh, ref _lastVolumeZh, _rate, false);
-        } finally {
-          if (Log != null) Log("ZH_PLAY_END [" + zh + "] ms=" + (int)(DateTime.Now - t0).TotalMilliseconds);
-        }
+        string playPath = null;
+        if (_zhIsRt && _zhRt != null) playPath = SpeakRtSync(_zhRt, zh.ToString(), "ZH", _rate, false);
+        else playPath = SpeakSync(_zh, zh.ToString(), "ZH", ref _lastRateZh, ref _lastVolumeZh, _rate, false);
+        if (playPath != null) _readyQueue.Add(new PreparedSpeech { Generation = gen, Path = playPath, Tag = "ZH" });
         zh.Clear();
       }
       if (enPending.Length > 0) {
@@ -163,8 +199,10 @@ namespace GenDaLangDu {
         if (Log != null) Log("EN_MERGE [" + enText + "] word=" + (asWord ? 1 : 0));
         int enRate = Math.Max(-10, _rate - 2);
         if (asWord) enRate = Math.Min(10, enRate + 3);
-        if (_enIsRt && _enRt != null) SpeakRtSync(_enRt, enText, "EN", enRate, !asWord);
-        else SpeakSync(_en, enText, "EN", ref _lastRateEn, ref _lastVolumeEn, enRate, !asWord);
+        string playPath = null;
+        if (_enIsRt && _enRt != null) playPath = SpeakRtSync(_enRt, enText, "EN", enRate, !asWord);
+        else playPath = SpeakSync(_en, enText, "EN", ref _lastRateEn, ref _lastVolumeEn, enRate, !asWord);
+        if (playPath != null) _readyQueue.Add(new PreparedSpeech { Generation = gen, Path = playPath, Tag = "EN" });
       }
       enWords.Clear();
       foreach (var ssmlItem in enSsmls) {
@@ -173,8 +211,10 @@ namespace GenDaLangDu {
         if (Log != null) Log("EN_SSML [" + plain + "]");
         int enRate = Math.Max(-10, _rate - 2);
         enRate = Math.Min(10, enRate + 3);
-        if (_enIsRt && _enRt != null) SpeakRtSync(_enRt, plain, "EN", enRate, false, ssml);
-        else SpeakSync(_en, plain, "EN", ref _lastRateEn, ref _lastVolumeEn, enRate, false, ssml);
+        string playPath = null;
+        if (_enIsRt && _enRt != null) playPath = SpeakRtSync(_enRt, plain, "EN", enRate, false, ssml);
+        else playPath = SpeakSync(_en, plain, "EN", ref _lastRateEn, ref _lastVolumeEn, enRate, false, ssml);
+        if (playPath != null) _readyQueue.Add(new PreparedSpeech { Generation = gen, Path = playPath, Tag = "EN" });
       }
       enSsmls.Clear();
     }
@@ -188,13 +228,22 @@ namespace GenDaLangDu {
     private int _lastVolumeZh = int.MinValue;
     private int _lastRateEn = int.MinValue;
     private int _lastVolumeEn = int.MinValue;
-    private void SpeakSync(dynamic voice, string text, string tag, ref int lastRate, ref int lastVolume, int rate, bool xml, string rawSsml = null) {
-      if (voice == null) return;
+    private static long _wavSeq;
+    /// <summary>每个语音用唯一临时文件：不复用固定槽位，
+    /// 杜绝"播放线程取件与合成线程选槽"之间的覆盖竞态（曾导致读错字/重复读/漏读）。</summary>
+    private static string NextWavPath() {
+      return System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+        "gll_" + Interlocked.Increment(ref _wavSeq).ToString() + ".wav");
+    }
+
+    /// <summary>SAPI 合成到唯一临时 WAV 并裁剪静音；返回可播放的文件路径（不播放，由播放线程播）。</summary>
+    private string SpeakSync(dynamic voice, string text, string tag, ref int lastRate, ref int lastVolume, int rate, bool xml, string rawSsml = null) {
+      if (voice == null) return null;
+      string wav = NextWavPath();
       try {
         if (rate != lastRate) { voice.Rate = rate; lastRate = rate; }
         if (_volume != lastVolume) { voice.Volume = _volume; lastVolume = _volume; }
       } catch { }
-      string wav = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "gll_speech.wav");
       try {
         dynamic fs = Activator.CreateInstance(Type.GetTypeFromProgID("SAPI.SpFileStream"));
         try { fs.Open(wav, 3); } catch { }
@@ -211,23 +260,20 @@ namespace GenDaLangDu {
         try { voice.AudioOutputStream = null; } catch { }
       } catch (Exception ex) {
         if (Log != null) Log(tag + "_ERR:" + ex.Message);
-        return;
+        try { System.IO.File.Delete(wav); } catch { }
+        return null;
       }
-      try {
-        string playPath = TrimWavSilence(wav);
-        PlayWavBlocking(playPath);
-      } catch (Exception ex) {
-        if (Log != null) Log(tag + "_ERR:" + ex.Message);
-      }
+      return FinishWav(wav, tag);
     }
 
-    private void SpeakRtSync(SpeechSynthesizer synth, string text, string tag, int rate, bool xml, string rawSsml = null) {
-      if (synth == null) return;
+    /// <summary>WinRT 合成到唯一临时 WAV 并裁剪静音；返回可播放的文件路径（不播放，由播放线程播）。</summary>
+    private string SpeakRtSync(SpeechSynthesizer synth, string text, string tag, int rate, bool xml, string rawSsml = null) {
+      if (synth == null) return null;
+      string wav = NextWavPath();
       try {
         try {
           synth.Options.SpeakingRate = Math.Max(0.5, Math.Min(6.0, 1.0 + rate * 0.1));
         } catch { }
-        string wav = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "gll_speech_rt.wav");
         try {
           SpeechSynthesisStream stream = null;
           try {
@@ -253,14 +299,34 @@ namespace GenDaLangDu {
               System.IO.File.WriteAllBytes(wav, buf);
             }
           }
-          string playPath = TrimWavSilence(wav);
-          PlayWavBlocking(playPath);
         } catch (Exception ex) {
           if (Log != null) Log(tag + "_ERR:" + ex.Message);
+          try { System.IO.File.Delete(wav); } catch { }
+          return null;
         }
       } catch (Exception ex) {
         if (Log != null) Log(tag + "_ERR:" + ex.Message);
+        try { System.IO.File.Delete(wav); } catch { }
+        return null;
       }
+      return FinishWav(wav, tag);
+    }
+
+    /// <summary>裁剪静音并清理中间文件；返回最终可播放路径（裁剪失败则用原文件）。</summary>
+    private string FinishWav(string wav, string tag) {
+      string playPath;
+      try {
+        playPath = TrimWavSilence(wav);
+      } catch (Exception ex) {
+        if (Log != null) Log(tag + "_ERR:" + ex.Message);
+        playPath = wav;
+      }
+      if (!System.IO.File.Exists(playPath)) playPath = wav;
+      if (playPath != wav) {
+        try { System.IO.File.Delete(wav); } catch { }
+      }
+      if (Log != null) Log(tag + "_SYNTH_END");
+      return System.IO.File.Exists(playPath) ? playPath : null;
     }
 
     /// <summary>用 mciSendString 播放 WAV：可被其它线程立即停止（SoundPlayer.Stop 跨线程无效）。</summary>
@@ -275,6 +341,7 @@ namespace GenDaLangDu {
         mciSendString("close " + alias, null, 0, IntPtr.Zero);
         uint er = mciSendString("open \"" + path + "\" type waveaudio alias " + alias, null, 0, IntPtr.Zero);
         if (er != 0 && Log != null) Log("PLAY_OPEN_ERR " + er + " " + path);
+        if (Log != null) Log("PLAY_OPEN_END");
         mciSendString("play " + alias, null, 0, IntPtr.Zero);
         _stopRequested = false;
         if (Log != null) Log("PLAY_START " + System.IO.Path.GetFileName(path));
@@ -609,9 +676,11 @@ namespace GenDaLangDu {
 
     public void Stop() {
       try {
-        /* 立即打断正在播放的音频（播放线程正阻塞在 PlaySync，队列命令无法处理） */
+        /* 立即打断正在播放的音频（播放线程正阻塞在播放中，队列命令无法处理）；
+           代际号 +1 使已预合成未播放的内容全部作废 */
         _stopRequested = true;
         mciSendString("stop gll_snd", null, 0, IntPtr.Zero);
+        Interlocked.Increment(ref _generation);
         SpeechItem tmp;
         while (_queue.TryTake(out tmp)) { }
         _queue.Add(new SpeechItem { Kind = SpeechItemKind.Cancel });
@@ -622,7 +691,10 @@ namespace GenDaLangDu {
       if (_disposed) return;
       try { _queue.Add(new SpeechItem { Kind = SpeechItemKind.Stop }); } catch { }
       if (_thread != null && _thread.IsAlive) _thread.Join(2000);
-      try { _ready.Dispose(); } catch { }
+      try { _readyQueue.Add(new PreparedSpeech { Tag = null }); } catch { }
+      if (_playerThread != null && _playerThread.IsAlive) _playerThread.Join(2000);
+      try { _readyQueue.Dispose(); } catch { }
+      try { _queue.Dispose(); } catch { }
     }
   }
 }

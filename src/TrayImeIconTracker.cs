@@ -13,12 +13,14 @@ namespace GenDaLangDu {
   /// 与旧"像素变化就翻转"不同：这里认图，悬停/时钟刷新不会误判。</summary>
   public sealed class TrayImeIconTracker : IDisposable {
     public event Action<bool> StateConfirmed;
+    public Action<string> Log;
 
     private readonly Bitmap _zhA;
     private readonly Bitmap _zhB;
     private readonly Bitmap _enA;
     private readonly Bitmap _enB;
     private Rectangle _rect = Rectangle.Empty;
+    private System.Threading.Tasks.Task _findTask;
     private DateTime _lastFindAt = DateTime.MinValue;
     private DateTime _lastCaptureAt = DateTime.MinValue;
     private int _lastApplied;   // 0 未知, 1 中文, 2 英文
@@ -38,11 +40,24 @@ namespace GenDaLangDu {
       _lastFindAt = DateTime.MinValue;
     }
 
+    /// <summary>宿主判定状态已失效（如切换窗口）时调用：重置已应用标记，
+    /// 让图标在下一帧重新发起确认，缩短状态未知窗口。</summary>
+    public void ResetApplied() {
+      _lastApplied = 0;
+      _pending = 0;
+      _confirmCount = 0;
+    }
+
     public void Tick() {
       if (_disposed) return;
       try {
         if ((DateTime.Now - _lastCaptureAt).TotalMilliseconds < 1000) return;
-        if (_rect.Width <= 0 || (DateTime.Now - _lastFindAt).TotalMilliseconds > 30000) FindRect();
+        if (_rect.Width <= 0 || (DateTime.Now - _lastFindAt).TotalMilliseconds > 30000) {
+          /* FindRect 含 UIA 全枚举，可能被忙碌的系统拖住：后台线程执行，不阻塞界面线程 */
+          if (_findTask == null || _findTask.IsCompleted) {
+            _findTask = System.Threading.Tasks.Task.Run((Action)FindRect);
+          }
+        }
         if (_rect.Width <= 0) return;
 
         /* 鼠标悬停在按钮上会出现高亮背景，跳过，避免干扰 */
@@ -54,12 +69,20 @@ namespace GenDaLangDu {
           return;
         }
 
+        double gapMs = (DateTime.Now - _lastCaptureAt).TotalMilliseconds;
         _lastCaptureAt = DateTime.Now;
         using (Bitmap bmp = new Bitmap(_rect.Width, _rect.Height)) {
           using (Graphics g = Graphics.FromImage(bmp)) {
             g.CopyFromScreen(_rect.X, _rect.Y, 0, 0, _rect.Size);
           }
           int v = Classify(bmp);
+          if (Log != null) {
+            try {
+              Log("TRAY_ICON_TICK v=" + v + " pending=" + _pending + " confirm=" + _confirmCount +
+                  " last=" + _lastApplied + " gap=" + gapMs.ToString("0") +
+                  " rect=" + _rect.X + "," + _rect.Y + " " + _rect.Width + "x" + _rect.Height);
+            } catch { }
+          }
           if (v == 0) {
             _confirmCount = 0;
             return;
@@ -70,6 +93,7 @@ namespace GenDaLangDu {
             _pending = v;
             _confirmCount = 1;
           }
+          /* 状态变化需连续 2 帧（约2秒）一致：低延迟优先，2 帧足以过滤单帧抖动 */
           if (_confirmCount >= 2 && v != _lastApplied) {
             _lastApplied = v;
             Action<bool> h = StateConfirmed;
@@ -217,6 +241,11 @@ namespace GenDaLangDu {
               System.Windows.Rect r = el.Current.BoundingRectangle;
               if (r.Width > 1 && r.Height > 1 && r.Width <= 55) {
                 _rect = new Rectangle((int)r.X, (int)r.Y, (int)r.Width, (int)r.Height);
+                if (Log != null) {
+                  try {
+                    Log("TRAY_ICON_RECT " + _rect.X + "," + _rect.Y + " " + _rect.Width + "x" + _rect.Height);
+                  } catch { }
+                }
                 return;
               }
             }

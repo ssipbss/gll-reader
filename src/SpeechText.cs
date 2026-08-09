@@ -66,6 +66,11 @@ namespace GenDaLangDu {
       return "";
     }
 
+    /// <summary>
+    /// 平移对齐差异：尝试窗口平移 0~12 字符后新旧窗口完全重合，
+    /// 末尾多出的字符即为刚输入的内容。解决连续多字上屏只截到
+    /// 末尾、以及文档变长导致窗口整体右移的误判。
+    /// </summary>
     public static string ShiftDiff(string oldT, string newT) {
       if (string.IsNullOrEmpty(oldT) || string.IsNullOrEmpty(newT)) return "";
       int maxShift = Math.Min(12, oldT.Length);
