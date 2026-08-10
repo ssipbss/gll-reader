@@ -46,19 +46,6 @@ namespace GenDaLangDu {
           return false;
         }
       }
-      /* 鼠标切英文的直通字母：记忆状态仍是中文时，先按"候选"缓冲，
-         超过4个字母且停顿后未被中文替换（拼音/五笔组字上屏）则确认英文并朗读 */
-      if (!ImeEnglishNow && IsPureAsciiLetters(ins)) {
-        if (TrayOnlyStateMode) {
-          DebugLog("UI_INSERT_SKIP enpass_off");
-          return false;
-        }
-        if ((DateTime.Now - _lastLetterKeyAt).TotalMilliseconds >= 2000) {
-          DebugLog("UI_INSERT_SKIP nokey_letters");
-          return false;
-        }
-        if (_enPassTracker.Note(ins, _lastUiElement)) return false;
-      }
       /* 退格/删除后1秒内，若期间没有新的按键，差异不朗读（删除不会产生新增，误读的'插入'不可信）；
          若删除后用户已继续打字，则正常朗读，避免把删除后马上打出的字吞掉 */
       if ((DateTime.Now - _lastDeleteAt).TotalMilliseconds < 1000 &&
@@ -235,7 +222,6 @@ namespace GenDaLangDu {
         return;
       }
       if (_lastUiElement != elementId) {
-        _enPassTracker.Cancel("element");
         string prevText = _lastUiText;
         _lastUiElement = elementId;
         _lastUiText = t;
