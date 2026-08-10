@@ -1209,8 +1209,9 @@ namespace GenDaLangDu {
         DateTime pktTsfAt;
         bool pktTsfActive = _tsfActivePids.Contains(pktPid) &&
                             _tsfCommitAt.TryGetValue(pktPid, out pktTsfAt);
-        if (!diffAlreadySpoke && !TextReader.IsKnownSlowApp() &&
-            !pktTsfActive) {
+        /* 按键缓冲不依赖 UIA 轮询，慢应用名单（WPS/notepad 等）只应禁止
+           差异通道的 UIA 查询，不能连按键通道一起关——否则慢应用中文完全静音 */
+        if (!diffAlreadySpoke && !pktTsfActive) {
           BufferPacketZh(c);
         }
         return;
