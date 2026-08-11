@@ -624,9 +624,10 @@ namespace GenDaLangDu {
       _listening = _hook.IsInstalled;
       if (_listening) {
         _mouseHook.Install();
-        /* TSF 注入已停用：把钩子 DLL 注入其它进程会拖卡/冻结宿主应用
-           （哔哩哔哩等曾卡死，见交接文档#13）；多多五笔是 IMM 输入法，
-           上屏内容走 VK_PACKET + 文档差异通道，无需 TSF */
+        /* TSF 注入仅对白名单内的原生应用启用：记事本/WPS/Office 的 UIA 不可读、
+           无 VK_PACKET、无 IMM 结果，中文读取只能靠 TSF 钩子；
+           Chromium 系（哔哩哔哩/Edge/Codex/Electron）注入曾致卡死/闪退（v2.40），一律排除 */
+        StartTsfHook();
         _lastResult = "";
         _lastUiText = null;
         _imeTimer.Start();
@@ -657,8 +658,35 @@ namespace GenDaLangDu {
       _statusPill.Invalidate();
     }
 
+    /// <summary>TSF 注入白名单：仅原生应用（UIA 不可读、无 VK_PACKET/IMM 结果，
+    /// 中文读取只能靠 TSF 钩子）。Chromium/Electron 系一律排除（注入曾致卡死/闪退）。</summary>
+    private bool IsTsfWhitelistedApp() {
+      try {
+        IntPtr fg = Native.GetForegroundWindow();
+        if (fg == IntPtr.Zero) return false;
+        uint pid;
+        Native.GetWindowThreadProcessId(fg, out pid);
+        if (pid == 0) return false;
+        using (Process p = Process.GetProcessById((int)pid)) {
+          string n = p.ProcessName.ToLowerInvariant();
+          return n == "notepad" || n == "notepad++" ||
+                 n == "wps" || n == "et" || n == "wpp" ||
+                 n == "winword" || n == "excel" || n == "powerpnt";
+        }
+      } catch {
+        return false;
+      }
+    }
+
     private void StartTsfHook() {
       try {
+        /* 白名单：仅原生应用注入（历史证明稳定且需要 TSF 才能读中文）。
+           Chromium/Electron 系（哔哩哔哩/Edge/Codex/OpenCode 等）一律不注入，
+           它们的中文走文档差异通道，注入曾致卡死/闪退（v2.40 结论）。 */
+        if (!IsTsfWhitelistedApp()) {
+          DebugLog("TSF_HOOK_SKIP app=" + CurrentForegroundName());
+          return;
+        }
         if (_tsfNotifyWindow == null) {
           _tsfNotifyWindow = new TsfNotifyWindow();
           _tsfNotifyWindow.CommitReceived += OnTsfCommit;
@@ -704,6 +732,14 @@ namespace GenDaLangDu {
         uint pid;
         uint tid = Native.GetWindowThreadProcessId(h, out pid);
         if (tid == _hookedTid) return;
+        /* 白名单强制：非白名单前台应用不注入（看门狗 30 秒轮询也会走到这里） */
+        if (!IsTsfWhitelistedApp()) {
+          if (_hookedTid != 0) {
+            try { _tsfBridge.UnhookThread(_hookedTid); } catch { }
+            _hookedTid = 0;
+          }
+          return;
+        }
         if (_hookedTid != 0) {
           _tsfBridge.UnhookThread(_hookedTid);
           _hookedTid = 0;
@@ -715,6 +751,21 @@ namespace GenDaLangDu {
         }
       } catch (Exception ex) {
         DebugLog("TSF_THREAD_HOOK_ERR " + ex.Message);
+      }
+    }
+
+    private string CurrentForegroundName() {
+      try {
+        IntPtr fg = Native.GetForegroundWindow();
+        if (fg == IntPtr.Zero) return "";
+        uint pid;
+        Native.GetWindowThreadProcessId(fg, out pid);
+        if (pid == 0) return "";
+        using (Process p = Process.GetProcessById((int)pid)) {
+          return p.ProcessName;
+        }
+      } catch {
+        return "";
       }
     }
 
@@ -1484,6 +1535,8 @@ namespace GenDaLangDu {
           /* 状态已失效：重置图标已应用标记，让图标尽快重新确认，缩短未知窗口 */
           if (_trayImeIcon != null) _trayImeIcon.ResetApplied();
           _appStates.SetCurrentPid(pid);
+          /* 切到白名单应用（记事本/WPS 等）时启用 TSF 钩子，StartTsfHook 幂等 */
+          StartTsfHook();
           /* 切换窗口时隐藏朗读按钮（朗读中可用 Esc 停止） */
           _selection.HideSelectionButton();
           DebugLog("FOCUS pid=" + pid + " app=" + _appStates.GetAppName(pid) +
