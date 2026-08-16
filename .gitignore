@@ -17,3 +17,5 @@ _patch_test.txt
 测试/
 gll_hook*.dll
 *.wav
+
+tools/tsfhook/bin/
