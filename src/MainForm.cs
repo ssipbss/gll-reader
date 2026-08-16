@@ -34,6 +34,7 @@ namespace GenDaLangDu {
     private string _autoText = null;
     private int _autoIndex;
     private int _autoSpoken;
+    private int _autoSpeedMs = 400;
     private System.Windows.Forms.Timer _autoTimer;
     private string _lastResult = "";
     private string _lastUiText = null;
@@ -196,10 +197,10 @@ namespace GenDaLangDu {
           _autoIndex = 0;
           _autoSpoken = 0;
           _autoTimer = new System.Windows.Forms.Timer();
-          _autoTimer.Interval = 400; /* 约150字/分钟 */
+          _autoTimer.Interval = _autoSpeedMs; /* 默认400ms/字≈150字/分；压测可调小 */
           _autoTimer.Tick += delegate { AutoTextTick(); };
           _autoTimer.Start();
-          _exitMs = Math.Max(_exitMs, 5000 + (_autoText == null ? 0 : _autoText.Length) * 400 + 15000);
+          _exitMs = Math.Max(_exitMs, 5000 + (_autoText == null ? 0 : _autoText.Length) * _autoSpeedMs + 30000);
         } else {
           _injectTimer = new System.Windows.Forms.Timer();
           _injectTimer.Interval = 2500;
@@ -347,6 +348,12 @@ namespace GenDaLangDu {
           _forceDebug = true;
         } else if (args[i] == "--auto-text" && i + 1 < args.Length) {
           _autoTextPath = System.IO.Path.GetFullPath(args[i + 1]);
+          i++;
+        } else if (args[i] == "--auto-speed" && i + 1 < args.Length) {
+          int v;
+          if (int.TryParse(args[i + 1], out v)) {
+            _autoSpeedMs = Math.Max(50, Math.Min(2000, v));
+          }
           i++;
         } else if (args[i] == "--exit-ms" && i + 1 < args.Length) {
           int v;

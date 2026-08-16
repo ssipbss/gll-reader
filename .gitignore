@@ -9,3 +9,11 @@ _patch_test.txt
 *.user
 安装包/
 语音测试样本/
+
+# 本地工具/产物/日志（不上传）
+.omo/
+.codegraph/
+发布/
+测试/
+gll_hook*.dll
+*.wav
