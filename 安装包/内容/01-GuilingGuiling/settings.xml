@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<AppSettings xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <ZhVoice>Microsoft Xiaoxiao (Natural) - Chinese (Simplified, China)</ZhVoice>
+  <EnVoice>Microsoft Xiaoxiao (Natural) - Chinese (Simplified, China)</EnVoice>
+  <Rate>2</Rate>
+  <Volume>100</Volume>
+  <Letters>true</Letters>
+  <Digits>true</Digits>
+  <Punct>true</Punct>
+  <Func>true</Func>
+  <Modifiers>false</Modifiers>
+  <DebugLog>true</DebugLog>
+  <ClickSpeak>true</ClickSpeak>
+  <ClickSpeakInitialized>true</ClickSpeakInitialized>
+</AppSettings>
